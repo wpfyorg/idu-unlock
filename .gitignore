@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+beacon.log
+*.pem
+*.bin
+backup/
+credentials.txt
+uboot_credentials.env
+factory_env.txt
+partitions.txt
+uboot_env.txt

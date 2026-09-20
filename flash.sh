@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# flash.sh — root access + full backup for JIDU routers. No firmware is written.
+#
+#   ./flash.sh                 verify the router -> unlock root SSH -> back it up
+#   ./flash.sh check           can this unit be unlocked? (read-only, safe to run in bulk)
+#   ./flash.sh unlock          root SSH only (persistent, survives reboots)
+#   ./flash.sh backup          factory credentials + a copy of every partition
+#   ./flash.sh detect          identify the model, change nothing
+#
+# Options:
+#   --router URL    router base URL (default https://192.168.31.1)
+#   --password P    router admin password (prompted if omitted)
+#   --key PATH      SSH key (default ~/.ssh/idu_rsa)
+#
+# The router must be SET UP, not factory-fresh: a reset IDU keeps its API locked
+# until the setup wizard is completed in the web UI. Reset it, finish the wizard
+# (which sets the admin password), then run this and supply that password.
+#
+# Only run against equipment you own or are explicitly authorised to test.
+# Provided as is, without warranty, without liability — see the README.
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROUTER="${ROUTER:-https://192.168.31.1}"
+PASSWORD="${PASSWORD:-}"
+KEY="${KEY:-}"
+CMD=""
+
+say()  { printf '\033[1;34m[*]\033[0m %s\n' "$*"; }
+good() { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
+bad()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; }
+
+usage() {
+  sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    unlock|backup|detect|check) CMD="$1"; shift ;;
+    --router)   ROUTER="$2";   shift 2 ;;
+    --password) PASSWORD="$2"; shift 2 ;;
+    --key)      KEY="$2";      shift 2 ;;
+    -h|--help)  usage; exit 0 ;;
+    flash)      bad "this tool no longer writes firmware — use it for root access and backups."; exit 2 ;;
+    -*)         bad "unknown option: $1"; usage; exit 2 ;;
+    *)          bad "unexpected argument: $1"; usage; exit 2 ;;
+  esac
+done
+[ -n "$CMD" ] || CMD="auto"
+
+# ---- an interpreter that has `requests` ---------------------------------- #
+PY=""
+if python3 -c 'import requests' >/dev/null 2>&1; then
+  PY="python3"
+elif [ -x "$HERE/.venv/bin/python" ] && "$HERE/.venv/bin/python" -c 'import requests' >/dev/null 2>&1; then
+  PY="$HERE/.venv/bin/python"
+else
+  say "installing dependencies into $HERE/.venv ..."
+  python3 -m venv "$HERE/.venv" || { bad "could not create a venv"; exit 1; }
+  "$HERE/.venv/bin/pip" -q install --upgrade pip requests || { bad "pip failed"; exit 1; }
+  PY="$HERE/.venv/bin/python"
+fi
+
+# ---- ssh key ------------------------------------------------------------- #
+[ -n "$KEY" ] || KEY="$HOME/.ssh/idu_rsa"
+
+# ---- password ------------------------------------------------------------ #
+if [ -z "$PASSWORD" ]; then
+  printf 'Enter the router admin password (set during the router setup): '
+  read -rs PASSWORD
+  echo
+fi
+[ -n "$PASSWORD" ] || { bad "no password given"; exit 2; }
+
+idu() { "$PY" "$HERE/idu.py" --router "$ROUTER" --password "$PASSWORD" --key "$KEY" "$@"; }
+
+describe() {
+  say "checking $ROUTER ..."
+  if ! idu detect; then
+    bad "could not take over the router. Usual causes:"
+    bad "  * it is unreachable, or an admin session is already open;"
+    bad "  * it is factory-reset — finish the setup wizard in the web UI first;"
+    bad "  * the password is wrong (the router locks out after ~5 tries)."
+    exit 1
+  fi
+}
+
+case "$CMD" in
+  detect)
+    idu detect || exit 1
+    ;;
+
+  check)
+    idu check
+    exit $?
+    ;;
+
+  unlock)
+    describe
+    idu unlock || exit 1
+    good "try: ssh -i $KEY -o IdentitiesOnly=yes root@${ROUTER#*//}"
+    ;;
+
+  backup)
+    describe
+    idu unlock || exit 1
+    idu backup --outdir "$PWD" || exit 1
+    good "backup written under $PWD"
+    ;;
+
+  auto)
+    describe
+    idu unlock || exit 1
+    idu backup --outdir "$PWD" || exit 1
+    good "backup written under $PWD"
+    good "try: ssh -i $KEY -o IdentitiesOnly=yes root@${ROUTER#*//}"
+    ;;
+esac
