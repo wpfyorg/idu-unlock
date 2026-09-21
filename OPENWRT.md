@@ -22,51 +22,49 @@
 
 # Installing OpenWrt by hand
 
-`flash.sh` stops at **root SSH + a backup**. It deliberately does not write
-firmware. This page is what comes next, for when you want to go further.
+`flash.sh` stops at **root SSH + a backup**. It deliberately does not write firmware. This page is what comes next, if you want to go further.
 
-**It is manual, and it is the risky part.** Read it end to end once before you
-type anything.
+**It is manual, and it is the risky part.** Read the whole page once before typing anything.
 
-## Read this before anything else
+## Contents
 
-- **You need your backup.** If you don't have it, stop and run
-  `./flash.sh backup` now. It contains every partition, the factory
-  credentials, and the original u-boot environment — the three things that get
-  you out of trouble.
-- **You need root SSH.** If `ssh -i ~/.ssh/idu_rsa root@192.168.31.1` doesn't
-  work yet, stop and run `./flash.sh unlock`.
-- **Two stages, and you need both.** OpenWrt is installed in two steps: a
-  temporary system that runs in RAM (*initramfs*), then the permanent one
-  (*sysupgrade*). The reason is simple — a running stock firmware can't be
-  safely overwritten from underneath itself. Booting the RAM version first
-  gives you something with nothing to lose while the real write happens.
-- **The router's address changes.** Stock firmware lives at `192.168.31.1`.
-  Once OpenWrt boots it is at `192.168.1.1`. Don't sit there hitting the old
-  address.
-- **Use a cable.** Wi-Fi on the temporary system is unreliable or absent. Plug
-  in Ethernet.
-- **Never pull the power** during `ubiformat` or `sysupgrade`. That is the one
-  action that turns a recoverable mistake into a brick.
+- [Quick reference](#quick-reference)
+- [Before you start](#before-you-start)
+- [Get the images](#get-the-images)
+- [MediaTek 6j01](#mediatek-6j01-jidu-6201--6401--6601--6701)
+- [Qualcomm 6j11](#qualcomm-6j11-jidu-6111--6411--6611--6811--6911)
+- [FAQ](#faq)
+- [Where this comes from](#where-this-comes-from)
 
-## Which router do you have?
+## Quick reference
 
-| Family | Models | What flashing takes |
-| --- | --- | --- |
-| MediaTek 6j01 | JIDU 6101 / 6201 / 6401 / 6601 / **6701** | SSH only — no extra hardware |
-| Qualcomm 6j11 | JIDU 6111 / 6411 / 6611 / 6811 / 6911 | SSH **plus a UART adapter** and opening the case |
+| Family | Models | Flashing needs | Stage 1 file | Stage 2 file |
+| --- | --- | --- | --- | --- |
+| MediaTek 6j01 | JIDU 6101 / 6201 / 6401 / 6601 / **6701** | SSH only | `…-jidu6j01-initramfs-factory.ubi` | `…-jidu6j01-squashfs-sysupgrade.bin` |
+| Qualcomm 6j11 | JIDU 6111 / 6411 / 6611 / 6811 / 6911 | SSH **+ UART adapter** + open case | `…-jidu6j11-initramfs-uImage.itb` | `…-jidu6j11-squashfs-sysupgrade.bin` |
 
-Not sure? `./flash.sh detect` prints the model and family.
+Key facts:
 
-**6j01 → [jump to the MediaTek steps](#mediatek-6j01-jidu-6201--6401--6601--6701).**
-**6j11 → [jump to the Qualcomm steps](#qualcomm-6j11-jidu-6111--6411--6611--6811--6911).**
+- Two stages, always: **initramfs** (temporary, runs in RAM) then **sysupgrade** (permanent). Stock firmware cannot overwrite itself safely.
+- Address change: stock is `192.168.31.1`, OpenWrt is `192.168.1.1`.
+- Use Ethernet, not Wi-Fi — Wi-Fi on the temporary system is unreliable or absent.
+- **Never pull power** during `ubiformat` or `sysupgrade`.
+- Unsure of your family? `./flash.sh detect` prints model and family.
 
-## Get the image files
+> The upstream flashing guide lists 6j01 as 6201 / 6401 / 6601 / 6701. The 6101 unlocks with `flash.sh` but is unverified for flashing — do not expect a tested path.
 
-Download the OpenWrt images for your router from the
-[**firmware download folder**](https://drive.google.com/drive/folders/16OvJoZeZFTx4dXRZWfGMlsy-RXDB54_h).
+## Before you start
 
-You want **two** files, and both must say your family:
+- [ ] `./flash.sh backup` completed — folder with one `.bin` per partition exists.
+- [ ] Root SSH works: `ssh -i ~/.ssh/idu_rsa root@192.168.31.1`.
+- [ ] Both image files downloaded (see below), filenames checked against your family.
+- [ ] Ethernet cable ready. For 6j11: UART adapter (CH340 / PL2303 / CP2102) at **3.3 V**, jumper wires, terminal program.
+
+Download images from the [**firmware download folder**](https://drive.google.com/drive/folders/16OvJoZeZFTx4dXRZWfGMlsy-RXDB54_h).
+
+## Get the images
+
+You need **two** files, both matching your family (`6j01` or `6j11`):
 
 ```
 …-jidu6j01-initramfs-factory.ubi        ← 6j01, stage 1
@@ -78,86 +76,51 @@ You want **two** files, and both must say your family:
 …-jidu6j11-squashfs-sysupgrade.bin      ← 6j11, stage 2
 ```
 
-> **Read the filenames and check the `6j01`/`6j11` part matches your unit.**
-> The commands below use those names as examples — **use whatever your files
-> are actually called**, every time you see a filename. The upstream guide
-> says the same thing, and it means it.
-
-Put both files somewhere convenient and open a terminal in that folder. From
-here on, "the folder" means *the one holding the images*, which is usually
-**not** the `idu-unlock` folder.
+Put both in one folder and open a terminal there. From here on, "the folder" means the image folder, usually **not** the `idu-unlock` folder. Commands below use example filenames — **substitute your actual filenames** every time.
 
 ---
 
 ## MediaTek 6j01 (JIDU 6201 / 6401 / 6601 / 6701)
 
-> The upstream instructions these steps come from list **6201, 6401, 6601 and
-> 6701**. The **6101** is unlocked by `flash.sh`, but it does *not* appear in the
-> upstream flashing guide — so treat the steps below as unverified for a 6101 and
-> don't expect anyone to have tested that combination.
+### 1. Inspect partitions
 
-### Step 1 — look at the partition table
+On the router:
 
 ```sh
 ssh -i ~/.ssh/idu_rsa root@192.168.31.1
-```
-
-You're now on the router. Note the prompt changes; commands from here until you
-`exit` run *on the router*, not on your PC.
-
-```sh
 cat /proc/mtd
 ```
 
-This lists the flash layout. You should see `BL2`, `u-boot-env`, `Factory`,
-`FIP`, `ubi`, `ubi2`, `MFG` and `Jio_Reserved`. Keep this output — it's also in
-your backup as `partitions.txt`.
+Expect `BL2`, `u-boot-env`, `Factory`, `FIP`, `ubi`, `ubi2`, `MFG`, `Jio_Reserved`. `mtd6` (`ubi2`) is where OpenWrt will live. This output is also in your backup as `partitions.txt`.
 
-The two that matter later are **`mtd6` (`ubi2`)** — where OpenWrt will live —
-and **`mtd1`–`mtd8`**, which you already have copies of.
-
-### Step 2 — confirm you have the backup
-
-Skip this if `./flash.sh backup` ran successfully. The backup is a folder named
-after the router's Wi-Fi network, so check it from **your PC**, not the router:
+Confirm the backup from your **PC**:
 
 ```sh
 ls */backup/
 ```
 
-You want one `.bin` per partition. If the folder is empty or missing, back out
-and do that first — this is the step that makes everything else reversible.
+One `.bin` per partition. If missing, stop and run `./flash.sh backup` first.
 
-*(If you'd rather dump them by hand, the commands are
-`ssh root@192.168.31.1 "cat /dev/mtd1" > mtd1_BL2.bin`, and so on for `mtd2`
-through `mtd8`. That's exactly what `flash.sh backup` already did for you.)*
+### 2. Send the stage-1 image
 
-### Step 3 — send the temporary image to the router
-
-Back on **your PC**, in the folder with the images:
+From your **PC**, in the image folder:
 
 ```sh
 scp -O openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi root@192.168.31.1:/tmp/
 ```
 
-> **If you get `unknown option -- O`**, your `scp` is older and doesn't need it
-> — run the same command with `-O` removed.
+> `unknown option -- O` means your `scp` is old — drop `-O` and retry.
 
-### Step 4 — write it, and tell u-boot to use it
+### 3. Write it and set boot variables
 
-Back on the **router** (your first SSH session, or a new one):
+On the **router**:
 
 ```sh
 ubidetach -m 6
 ubiformat /dev/mtd6 -y -f /tmp/openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi
 ```
 
-Line by line, that detaches the existing UBI volume on `mtd6` so it can be
-rewritten, then erases `mtd6` and writes the OpenWrt image into it. **This is
-the point of no return** — the stock firmware on `mtd6` is gone from here, and
-your backup is what brings it back.
-
-Now the boot settings:
+**Point of no return** — stock firmware on `mtd6` is gone after this; the backup is the way back.
 
 ```sh
 fw_setenv bootcmd 'ubi detach; ubi part ubi2; ubi read 46000000 kernel; fdt addr $(fdtcontroladdr); fdt rm /signature; bootm 0x46000000'
@@ -167,107 +130,57 @@ fw_setenv dual_boot.slot_1_invalid 1
 fw_setenv ipaddr
 ```
 
-- `bootcmd` — replaces "boot the stock system" with "load the kernel out of the
-  new UBI volume and boot it". The `fdt rm /signature` part drops the vendor's
-  signature check, which stock firmware would otherwise fail.
-- the three `dual_boot` lines — these stop the stock A/B slot logic from
-  deciding your install is invalid and booting/reverting around it.
-- `fw_setenv ipaddr` with **nothing after it** — deletes the sticky IP address
-  the stock system left in u-boot's environment. Without this the router can
-  come up at an address you're not expecting.
+What this does: `bootcmd` boots the new kernel instead of stock (`fdt rm /signature` drops the vendor signature check); the three `dual_boot` lines stop stock A/B logic from reverting it; bare `fw_setenv ipaddr` deletes the sticky stock IP. Keep the **single quotes** — `$(fdtcontroladdr)` must reach u-boot literally.
 
-> **Keep the single quotes exactly as shown.** `'…'` stops *your* shell from
-> expanding `$(fdtcontroladdr)` — that has to reach u-boot literally so *u-boot*
-> expands it. Use double quotes or retype it and you'll store a broken boot
-> command.
-
-### Step 5 — reboot into the temporary system
+### 4. Boot the temporary system
 
 ```sh
 reboot
 ```
 
-The router goes down and comes back on the **initramfs** — a complete OpenWrt
-running entirely in RAM, so nothing is permanent yet and there's nothing to
-break. Give it a minute, then from your PC:
+Wait about a minute, then from your PC:
 
 ```sh
 ssh root@192.168.1.1
 ```
 
-**Note the address: `192.168.1.1`, not `192.168.31.1`.** If SSH won't answer,
-try `http://192.168.1.1` in a browser — the LuCI login page means it came up
-fine.
+Note the new address. If SSH fails, try `http://192.168.1.1` — the LuCI login page means it booted.
 
-### Step 6 — write the permanent system
+### 5. Write the permanent system
 
-From **your PC**, in the folder with the images:
+From your **PC**:
 
 ```sh
 scp -O openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-squashfs-sysupgrade.bin root@192.168.1.1:/tmp/
 ```
 
-Then **on the router**:
+On the **router**:
 
 ```sh
 sysupgrade /tmp/openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-squashfs-sysupgrade.bin
 ```
 
-The router writes the real system and reboots on its own. **Do not touch it
-until it's back.** When it returns you have OpenWrt at `192.168.1.1` — the
-default LuCI login is the usual OpenWrt one, and you'll be asked to set a root
-password.
-
-*Prefer clicking?* Browse to `http://192.168.1.1` → **System → Backup / Flash
-Firmware** → *Flash image…* → pick the `sysupgrade.bin`. Same result, and it
-double-checks the image for you. Don't tick *Keep settings* on this first flash.
-
-**That's it.** Over SSH you're done after this step.
+It writes and reboots itself. **Do not touch it until it returns** at `192.168.1.1`. Set a root password on first login. GUI alternative: `http://192.168.1.1` → **System → Backup / Flash Firmware → Flash image…**, do not tick *Keep settings*.
 
 ---
 
 ## Qualcomm 6j11 (JIDU 6111 / 6411 / 6611 / 6811 / 6911)
 
-This family is harder: **you must open the case and connect a serial (UART)
-adapter.** Flashing happens from u-boot, not from Linux, because the stock
-firmware's own update path is what has to be replaced. This is not avoidable.
+Flashing happens from u-boot over UART — not avoidable for this family.
 
-### What you need
-
-A **USB-to-TTL (UART) adapter** — CH340, PL2303 or CP2102 all work — plus jumper
-wires, and a terminal program on your PC. Any of them will do; the upstream
-guide links to specific ones if you'd rather not shop around.
-
-> **Check the adapter's voltage jumper is on 3.3 V, not 5 V.** Router UART pins
-> are 3.3 V, and 5 V can damage the board.
-
-### Step 1 — back up, and read the factory data
-
-From **your PC**:
-
-```sh
-ssh -i ~/.ssh/idu_rsa root@192.168.31.1
-```
+### 1. Back up and copy factory data
 
 On the **router**:
 
 ```sh
+ssh -i ~/.ssh/idu_rsa root@192.168.31.1
 cat /proc/mtd
 jioMfgData get all
 ```
 
-`jioMfgData get all` prints the factory data — serial, MACs, Wi-Fi keys,
-passwords. **Copy the whole output somewhere safe and offline**, and don't post
-it anywhere. Your `flash.sh backup` already captured the same thing (see
-`credentials.txt` in the backup folder), so this is a second copy rather than a
-replacement.
+Copy the `jioMfgData` output somewhere safe and offline (serial, MACs, Wi-Fi keys). Your `flash.sh backup` already saved it as `credentials.txt` — this is a second copy.
 
-Do you have `mtd23` (`rootfs`) and `mtd24` (`rootfs1`)? They're in your backup
-too — `flash.sh backup` images every partition it finds. If you'd rather dump
-them by hand, it's the same `ssh root@192.168.31.1 "cat /dev/mtd23" > mtd23_rootfs.bin`
-pattern.
-
-### Step 2 — reset the vendor data
+### 2. Reset vendor data
 
 On the **router**:
 
@@ -275,175 +188,136 @@ On the **router**:
 jioMfgData init
 ```
 
-Upstream calls this "Reset Existing Data": it resets the vendor data store so
-it can't interfere with the install. **Your backup is now the only copy** —
-which is why step 1 came first.
+Your backup is now the only copy of that data.
 
-### Step 3 — open the case and connect UART
+### 3. Connect UART
 
-**Power the router off.** Open the case, find the UART header, and connect it to
-your USB-to-TTL adapter. **Adapter TX → router RX, adapter RX → router TX, and
-GND → GND.** Cross TX and RX, don't cross GND.
+Power off. Open the case, find the UART header (photos in upstream [`uart_pins`](https://github.com/the-diy-daddy/6j01_6j11/tree/main/uart_pins) — match your model). Wire **adapter TX → router RX, adapter RX → router TX, GND → GND**. Jumper on **3.3 V**, never 5 V.
 
-There are board photos in the upstream repository's
-[`uart_pins`](https://github.com/the-diy-daddy/6j01_6j11/tree/main/uart_pins)
-folder — match your model.
+Open a terminal on the serial port at **115200 baud, 8N1**, then power on. Press a key repeatedly to interrupt boot and reach the u-boot prompt. Log in with your unit's credentials from `<backup-folder>/uboot_credentials.env`.
 
-Open your terminal program on the adapter's serial port at **115200 baud,
-8 data bits, no parity, 1 stop bit** (the stock firmware's own boot arguments
-say `115200n8`). Then power the router on.
+### 4. Load OpenWrt over TFTP
 
-### Step 4 — stop the boot and log in
-
-Watch the wall of text. You need to **interrupt the boot sequence** — press a
-key repeatedly as soon as it starts. You'll land at a u-boot prompt asking for
-a username and password.
-
-The upstream guide documents the default credentials for these units, and **your
-own unit's are in the backup**:
-
-```
-<your-backup-folder>/uboot_credentials.env
-```
-
-Use those if they differ from the documented default — a carrier or a firmware
-revision can change them.
-
-### Step 5 — load OpenWrt over TFTP
-
-You need a TFTP server on your PC serving **the folder with the images**, and
-your PC's IP set to `192.168.1.2` — with an Ethernet cable from your PC to one
-of the router's LAN ports. Leave the UART connection in place so you can watch
-each step.
-
-At the u-boot prompt:
+Serve the image folder over TFTP from your PC at `192.168.1.2`, Ethernet to a router LAN port, UART still attached. At the u-boot prompt:
 
 ```
 setenv ipaddr 192.168.1.1
 setenv serverip 192.168.1.2
-```
-
-Then — **with your actual filename**, not the example:
-
-```
 tftpboot openwrt-qualcommbe-ipq95xx-jiorouter-ax6000-jidu6j11-initramfs-uImage.itb
-```
-
-That pulls the temporary system into RAM over the network. Then boot it:
-
-```
 bootm
 ```
 
-### Step 6 — install the permanent system
+Use your actual filename. The router now runs OpenWrt in RAM at `192.168.1.1`.
 
-The router is now running OpenWrt in RAM at `192.168.1.1`.
+### 5. Install the permanent system
 
-**Either** browse to `http://192.168.1.1`, log into LuCI, and use **System →
-Backup / Flash Firmware → Flash image…** with the `squashfs-sysupgrade.bin`.
+Via browser: `http://192.168.1.1` → **System → Backup / Flash Firmware → Flash image…** with the `squashfs-sysupgrade.bin`.
 
-**Or** do it over SSH from your PC:
+Or via SSH from your PC:
 
 ```sh
 scp -O openwrt-qualcommbe-ipq95xx-jiorouter-ax6000-jidu6j11-squashfs-sysupgrade.bin root@192.168.1.1:/tmp/
 ssh root@192.168.1.1 sysupgrade /tmp/openwrt-qualcommbe-ipq95xx-jiorouter-ax6000-jidu6j11-squashfs-sysupgrade.bin
 ```
 
-### Step 7 — if it reports "No Kernel Found"
+---
 
-Some IDU models hit this on first boot into OpenWrt. At the u-boot prompt, set
-these two and boot again:
+## FAQ
+
+<details>
+<summary><strong>No Kernel Found on first OpenWrt boot (6j11)</strong></summary>
+
+At the u-boot prompt, set and boot again:
 
 ```
 setenv mtdids nand0=nand0
 setenv mtdparts 'mtdparts=nand0:0xE100000@0x1700000(rootfs)'
 ```
 
-*(Single quotes again — the `( )` must reach u-boot untouched.)*
+Single quotes again — the `( )` must reach u-boot untouched.
 
----
+</details>
 
-## Going back to stock
+<details>
+<summary><strong>Going back to stock — 6j11 (documented upstream)</strong></summary>
 
-**Read this before you flash, not after.** Knowing the exit exists is what makes
-the rest of this safe.
-
-### 6j11 — documented by upstream
-
-Get your saved `mtd23`/`mtd24` images onto the router, then from its shell:
+Get saved `mtd23`/`mtd24` images onto the router, then:
 
 ```sh
 mtd -e /dev/mtd23 write /tmp/mtd23_rootfs.bin /dev/mtd23
 mtd -e /dev/mtd24 write /tmp/mtd24_rootfs1.bin /dev/mtd24
 ```
 
-Then restore the boot behaviour in the u-boot console:
+In the u-boot console:
 
 ```
 setenv bootcmd 'bootipq'
 ```
 
-And, if you've lost UART shell access, the stock boot arguments:
+If UART shell access is lost, also:
 
 ```
 setenv bootargs 'console=ttyMSM0,115200n8 cnss2.bdf_pci1=0xb7 cnss2.bdf_integrated=0x30'
 ```
 
-### 6j01 — reconstruct it from your backup
+</details>
 
-Upstream doesn't document a revert for this family. The pieces you need are all
-in your backup, though:
+<details>
+<summary><strong>Going back to stock — 6j01 (reconstructed from backup)</strong></summary>
 
-1. **`uboot_env.txt`** — your original u-boot environment, captured *before* you
-   changed anything. It holds the stock `bootcmd` and the original `ipaddr`.
-   Put them back with `fw_setenv` (and drop the three `dual_boot.*` variables
-   you set).
-2. **`backup/mtd6_ubi2.bin`** — the stock system image. Write it back the same
-   way you wrote OpenWrt in:
+Upstream documents no revert for this family; all pieces are in your backup:
 
+1. `uboot_env.txt` — original `bootcmd` and `ipaddr`. Restore with `fw_setenv`, and drop the three `dual_boot.*` variables you set.
+2. `backup/mtd6_ubi2.bin` — the stock system image:
    ```sh
    ubidetach -m 6
    ubiformat /dev/mtd6 -y -f /tmp/mtd6_ubi2.bin
    ```
-
 3. Reboot.
 
-Do this from the **initramfs** (stage 1), not from the installed OpenWrt — the
-same reason the install works that way. If the router won't boot at all, the
-u-boot console over UART is the way in.
+Do this from **initramfs** (stage 1), not installed OpenWrt. If it will not boot at all, enter via UART.
 
-## When it goes wrong
+</details>
 
-- **It won't boot at all.** Don't panic and don't keep power-cycling it. The
-  u-boot console over UART still works when Linux can't start, and that's where
-  you undo things. For 6j01 you'll need a UART adapter you may not have bought
-  yet — worth having before you start.
-- **You can't reach `192.168.31.1` any more.** You're probably past stage 1 —
-  try `192.168.1.1`.
-- **`scp` or `ssh` refuses the connection after stage 1.** Give it a minute to
-  finish booting, and use the LuCI page in a browser as a sanity check.
-- **`ubiformat` errors out.** Stop. Re-read the step: `ubidetach -m 6` must
-  succeed *before* `ubiformat`, and the image must be the `-factory.ubi` file,
-  not the `sysupgrade` one. Mixing those two up is the most common mistake here.
-- **Power cut mid-write.** This is the bad one. UART and the u-boot console; for
-  6j11 the `bootcmd`/`bootargs` lines above are what you'll need.
-- **You want out.** See *Going back to stock*. That's what the backup is for.
+<details>
+<summary><strong>It will not boot at all</strong></summary>
+
+Stop power-cycling. Use the u-boot console over UART — it works when Linux cannot start. For 6j01, buy the adapter before you start flashing.
+
+</details>
+
+<details>
+<summary><strong>192.168.31.1 is unreachable</strong></summary>
+
+You are probably past stage 1 — try `192.168.1.1`.
+
+</details>
+
+<details>
+<summary><strong>ssh/scp refused after stage 1</strong></summary>
+
+Give it a minute to finish booting; check the LuCI page in a browser as a sanity check.
+
+</details>
+
+<details>
+<summary><strong>ubiformat errors out</strong></summary>
+
+`ubidetach -m 6` must succeed first, and the image must be the `-factory.ubi` file — not the `sysupgrade` one. Mixing them up is the most common mistake.
+
+</details>
+
+<details>
+<summary><strong>Power cut mid-write</strong></summary>
+
+The bad one. Enter via UART and the u-boot console; for 6j11 the `bootcmd`/`bootargs` lines above are what you need.
+
+</details>
 
 ## Where this comes from
 
-The procedure on this page is the community's, worked out by
-**[the-diy-daddy](https://github.com/the-diy-daddy/6j01_6j11)** — the 6j01 steps
-come from that repository's README, and the 6j11 steps from its
-`6j11_instructions.md`. Credit for working it out belongs there. If you get
-stuck, that repository and its videos are the better place to look than this
-page.
+The procedure is the community's, worked out by **[the-diy-daddy](https://github.com/the-diy-daddy/6j01_6j11)** — 6j01 steps from that repository's README, 6j11 steps from its `6j11_instructions.md`. Credit belongs there. If stuck, that repository and its videos are the better place to look than this page.
 
-This page is this project's own wording of it, written to be followed slowly.
-That repository ships no licence, so nothing from it is copied here, and
-neither is the PoC this project started from.
+This page is this project's own wording, written to be followed slowly. That repository ships no licence, so nothing from it is copied here, and neither is the PoC this project started from.
 
-**One deliberate omission:** the 6j11 u-boot console's default credentials are
-published in the upstream guide, but not repeated here — this project's
-[stated position](README.md) is that it carries no vendor secrets, and your own
-unit's credentials are in your own backup anyway. If you want the defaults,
-they're in the upstream document linked above.
+**One deliberate omission:** the 6j11 u-boot console's default credentials are published upstream but not repeated here — this project's [stated position](README.md) is that it carries no vendor secrets, and your own unit's credentials are in your backup anyway.

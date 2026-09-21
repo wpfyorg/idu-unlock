@@ -61,20 +61,38 @@ idu.py       Core engine used by both launchers (use directly for scripting)
 
 ## Contents
 
+- [Command reference](#command-reference)
 - [Supported models](#supported-models)
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
-- [Getting the files — beginner guide](#getting-the-files--beginner-guide)
+- [Download](#download)
 - [Unlock and backup — step by step](#unlock-and-backup--step-by-step)
-- [Command reference](#command-reference)
 - [Windows setup](#windows-setup)
-- [Troubleshooting](#troubleshooting)
-- [Glossary for beginners](#glossary-for-beginners)
-- [How it works — for the curious](#how-it-works--for-the-curious)
-- [What is in a backup](#what-is-in-a-backup)
+- [FAQ](#faq)
+- [Glossary](#glossary)
 - [What is next — OpenWrt](#what-is-next--openwrt)
 - [License](#licence)
 - [Credits and provenance](#provenance)
+
+## Command reference
+
+| Command | Purpose | Modifies the router? |
+| --- | --- | --- |
+| `./flash.sh check` | Is this unit unlockable? | No — read-only |
+| `./flash.sh detect` | Identify model and family | No — read-only |
+| `./flash.sh backup` | Unlock, then save credentials + full flash image | Yes — installs SSH key, then reads |
+| `./flash.sh unlock` | Install persistent root SSH | Yes — installs SSH key |
+| `./flash.sh` | Verify → unlock → backup, with prompts | Yes — installs SSH key |
+
+On Windows, use `.\flash.ps1` in place of `./flash.sh`.
+
+Common options (all commands):
+
+- `--router URL` (default `https://192.168.31.1`)
+- `--password PW` (if omitted, you are prompted securely)
+- `--key PATH` (default `~/.ssh/idu_rsa`)
+
+In PowerShell, single-dash forms (`-Router`, `-Password`, `-Key`) also work.
 
 ## Supported models
 
@@ -114,8 +132,6 @@ Two conditions apply to all models:
 
 ## Quick start
 
-For experienced users who already have the project downloaded:
-
 ```sh
 ./flash.sh check      # read-only: is this unit unlockable?
 ./flash.sh backup     # unlock (persistent root SSH) + full backup
@@ -131,74 +147,26 @@ On Windows:
 
 Running `./flash.sh` with no arguments performs the full sequence (verify → unlock → backup) with prompts.
 
-## Getting the files — beginner guide
-
-If you are new to terminals and GitHub, follow these five steps. Experienced users can use the one-line shortcut in the tip box.
-
-> **In a hurry?** Open a terminal first (step 2), then run one line. It downloads the project, unpacks it, and moves you inside it:
->
-> macOS / Linux:
->
-> ```sh
-> curl -L https://github.com/wpfyorg/idu-unlock/archive/refs/heads/main.tar.gz | tar xz && cd idu-unlock-main && chmod +x flash.sh idu.py
-> ```
->
-> Windows (PowerShell):
->
-> ```powershell
-> Invoke-WebRequest https://github.com/wpfyorg/idu-unlock/archive/refs/heads/main.zip -OutFile idu-unlock.zip; Expand-Archive idu-unlock.zip -DestinationPath .; cd idu-unlock-main
-> ```
->
-> `chmod +x` restores the executable permission that ZIP downloads lose (a `git clone` preserves it). Then continue at step 4 to verify.
-
-**1. Download the project.** Choose one method:
-
-- **With git** (recommended — makes updating easy):
-  ```sh
-  git clone https://github.com/wpfyorg/idu-unlock.git
-  ```
-  If `git` is missing: macOS will offer to install it the first time you type `git`; Linux: `sudo apt install git`; Windows: `winget install Git.Git`.
-- **Without git:** open [the repository page](https://github.com/wpfyorg/idu-unlock), click the green **Code** button → **Download ZIP**, then unpack it (Windows: right-click → *Extract All*; macOS: double-click).
-
-**2. Open a terminal.** A terminal is a window where you type commands instead of clicking.
-
-| System | How to open it |
-| --- | --- |
-| macOS | `Cmd` + `Space`, type `Terminal`, press Enter |
-| Windows | Press `Win`, type `PowerShell`, press Enter |
-| Linux | `Ctrl` + `Alt` + `T` on most desktops |
-
-**3. Move into the project folder.** `cd` means *change directory*.
-
-The easiest way: type `cd` followed by a space, then drag the `idu-unlock` folder from your file manager onto the terminal window. It will fill in the path. Press Enter.
-
-Or type the path manually (downloads usually land in `Downloads`):
+## Download
 
 ```sh
-cd ~/Downloads/idu-unlock        # macOS / Linux
-cd $HOME\Downloads\idu-unlock    # Windows PowerShell
+git clone https://github.com/wpfyorg/idu-unlock.git
+cd idu-unlock
 ```
 
-**4. Confirm you are in the right place.** List the folder contents:
+Or without git: download the ZIP from [the repository page](https://github.com/wpfyorg/idu-unlock) (**Code** → **Download ZIP**), unpack it, and `cd` into the folder.
+
+One-line shortcuts (download, unpack, enter):
 
 ```sh
-ls
+curl -L https://github.com/wpfyorg/idu-unlock/archive/refs/heads/main.tar.gz | tar xz && cd idu-unlock-main && chmod +x flash.sh idu.py
 ```
 
-`ls` is a lowercase L. It works in PowerShell too. You should see `flash.sh`, `flash.ps1`, and `idu.py`. If you see only another folder (unzipping often adds a level), run `cd idu-unlock` and `ls` again.
-
-**5. Run the compatibility check.**
-
-```sh
-./flash.sh check        # macOS / Linux
-.\flash.ps1 check       # Windows
+```powershell
+Invoke-WebRequest https://github.com/wpfyorg/idu-unlock/archive/refs/heads/main.zip -OutFile idu-unlock.zip; Expand-Archive idu-unlock.zip -DestinationPath .; cd idu-unlock-main
 ```
 
-> **"Permission denied" on macOS/Linux?** ZIP downloads lose the executable bit. Fix it once, inside the project folder:
->
-> ```sh
-> chmod +x flash.sh idu.py
-> ```
+ZIP downloads lose the executable bit — if `./flash.sh` says *permission denied*, run `chmod +x flash.sh idu.py` once inside the folder.
 
 ## Unlock and backup — step by step
 
@@ -207,7 +175,7 @@ ls
 **Step 0 — Prepare.**
 
 - Log out of the router's web page. The router permits only **one admin login at a time**.
-- Open a terminal inside the project folder (see above).
+- Open a terminal inside the project folder.
 
 **Step 1 — Identify the router (safe, read-only).**
 
@@ -215,7 +183,7 @@ ls
 ./flash.sh detect
 ```
 
-Example output: `[+] JIDU6701 · ... · family: mediatek`. Nothing is modified. If this fails, see [Troubleshooting](#troubleshooting).
+Example output: `[+] JIDU6701 · ... · family: mediatek`. Nothing is modified. If this fails, see [FAQ](#faq).
 
 > The router temporarily blocks logins after approximately five incorrect passwords. If it rejects yours, verify the password rather than retrying repeatedly.
 
@@ -235,53 +203,9 @@ ssh -i ~/.ssh/idu_rsa root@192.168.31.1
 
 The unlock installs a startup script on the router so SSH survives reboots. `./flash.sh unlock` performs only this step and prints the exact `ssh` command for your router's address at the end.
 
-## Command reference
-
-| Command | Purpose | Modifies the router? |
-| --- | --- | --- |
-| `./flash.sh check` | Is this unit unlockable? | No — read-only |
-| `./flash.sh detect` | Identify model and family | No — read-only |
-| `./flash.sh backup` | Unlock, then save credentials + full flash image | Yes — installs SSH key, then reads |
-| `./flash.sh unlock` | Install persistent root SSH | Yes — installs SSH key |
-| `./flash.sh` | Verify → unlock → backup, with prompts | Yes — installs SSH key |
-
-On Windows, use `.\flash.ps1` in place of `./flash.sh`.
-
-Common options (all commands):
-
-- `--router URL` (default `https://192.168.31.1`)
-- `--password PW` (if omitted, you are prompted securely)
-- `--key PATH` (default `~/.ssh/idu_rsa`)
-
-In PowerShell, single-dash forms (`-Router`, `-Password`, `-Key`) also work.
-
-Sorting through multiple units? `check` exits `0` when unlockable and `2` when not:
-
-```sh
-for ip in $(cat idus.txt); do
-  ./flash.sh --router "https://$ip" --password "$PW" check
-  echo "$ip -> $?"
-done
-```
-
-```powershell
-foreach ($ip in Get-Content idus.txt) {
-  .\flash.ps1 --router "https://$ip" --password $PW check
-  "$ip -> $LASTEXITCODE"
-}
-```
-
-### Using the engine directly
-
-```
-idu.py [--router URL] [--password PW] [--key PATH] {check,detect,unlock,backup}
-```
-
-Identical behaviour, plus `check --json` for machine-readable output and `backup --full-chip` to also image `mtd0` (the whole SPI chip).
-
 ## Windows setup
 
-Windows includes everything required except two one-time prerequisites. Use **`flash.ps1`** — `flash.sh` is a bash script and will not run natively.
+Use **`flash.ps1`** — `flash.sh` is a bash script and will not run natively.
 
 **One-time setup**
 
@@ -292,8 +216,6 @@ Windows includes everything required except two one-time prerequisites. Use **`f
    ```
 
 **Running the tool**
-
-Open PowerShell, `cd` into the project folder, then:
 
 ```powershell
 .\flash.ps1 check      # read-only compatibility check
@@ -310,42 +232,88 @@ This expires when the window closes and changes nothing permanently.
 
 **Firewall and port 80.** To unlock, the tool starts a small web server on your PC that the *router* downloads the installer from. On first unlock, Windows Firewall will ask for permission — click **Allow** for **Private** networks (your home network; *Public* is for cafés and similar).
 
-If an unlock ends with *the router did not call back*, the firewall is the most likely cause: allow `python.exe`, or run PowerShell as administrator so the rule can be created. If that does not help, another program may already occupy port 80 (IIS and the *World Wide Web Publishing Service* are common). Check with:
+If an unlock ends with *the router did not call back*, allow `python.exe` through the firewall, or run PowerShell as administrator so the rule can be created. If another program already occupies port 80 (IIS and the *World Wide Web Publishing Service* are common), check with:
 
 ```powershell
 netstat -ano | findstr :80
 ```
 
-A reboot clears a stuck holder. Alternatively, `flash.sh` runs unchanged under **WSL** or **Git Bash** — native PowerShell simply has fewer moving parts.
+A reboot clears a stuck holder. Alternatively, `flash.sh` runs unchanged under **WSL** or **Git Bash**.
 
-## Troubleshooting
+## FAQ
 
-- **"Another admin session is already open"** — log out of the router's web page (or reboot the router) and retry. One admin session at a time is a hard limit.
-- **"The router is factory-reset"** — complete the setup wizard in a browser first, then return.
-- **Wrong password / logins blocked** — the router locks out after ~5 failures. Wait, then double-check the password.
-- **`check` reports not unlockable** — the unit runs `R3.x` firmware. There is no unlock path for it in this repository.
-- **"Nothing arrives at the callback" / "the router did not call back"** — your computer's firewall is likely blocking the router. Your machine must be reachable on port 80 and on the router's subnet. On Windows, allow `python.exe` or run PowerShell as administrator.
-- **`cd`: "no such file or directory"** — the path is incorrect. Run `ls` to see where you are, or drag the folder onto the terminal to fill in the path.
-- **`Permission denied` running `./flash.sh`** — ZIP downloads drop the executable bit. Run `chmod +x flash.sh idu.py` once.
-- **Windows: "running scripts is disabled"** — run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for the current window.
-- **Windows: "`ssh` is not recognized"** — install the OpenSSH Client (see above).
-- **"`ssh` is not installed, or not on PATH"** — the tool's message for the same problem, with the install command for your platform.
-- **SSH refused after a reboot** — the unlock did not fully apply. Run `./flash.sh unlock` again.
-- **Backup folder is very large** — expected. Every partition is imaged; `mtd5` and `mtd6` alone are approximately 140 MB and 90 MB. `--full-chip` adds more.
+<details>
+<summary><strong>Another admin session is already open</strong></summary>
 
-## Glossary for beginners
+Log out of the router's web page (or reboot the router) and retry. One admin session at a time is a hard limit.
 
-| Term | Meaning |
-| --- | --- |
-| **SSH** | Secure remote terminal — how you log in to and control the router from your computer. |
-| **root** | The all-powerful administrator account on a Linux system. |
-| **Firmware** | The operating system stored inside the router. |
-| **Partition** | A named section of the flash chip (the MFG partition holds factory passwords). |
-| **u-boot** | The small bootloader that starts the router before the main OS loads. |
-| **UART** | A serial port on the circuit board, used when software access is not enough. |
-| **`/WCGI`** | The router's internal web API — what its admin web page communicates with. |
+</details>
 
-## How it works — for the curious
+<details>
+<summary><strong>The router is factory-reset</strong></summary>
+
+Complete the setup wizard in a browser first, then return.
+
+</details>
+
+<details>
+<summary><strong>Wrong password / logins blocked</strong></summary>
+
+The router locks out after ~5 failures. Wait, then double-check the password.
+
+</details>
+
+<details>
+<summary><strong>check reports not unlockable</strong></summary>
+
+The unit runs `R3.x` firmware. There is no unlock path for it in this repository.
+
+</details>
+
+<details>
+<summary><strong>The router did not call back / nothing arrives at the callback</strong></summary>
+
+Your computer's firewall is likely blocking the router. Your machine must be reachable on port 80 and on the router's subnet. On Windows, allow `python.exe` or run PowerShell as administrator.
+
+</details>
+
+<details>
+<summary><strong>Permission denied running ./flash.sh</strong></summary>
+
+ZIP downloads drop the executable bit. Run `chmod +x flash.sh idu.py` once.
+
+</details>
+
+<details>
+<summary><strong>Windows: running scripts is disabled</strong></summary>
+
+Run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for the current window.
+
+</details>
+
+<details>
+<summary><strong>Windows: ssh is not recognized / ssh is not installed, or not on PATH</strong></summary>
+
+Install the OpenSSH Client — see [Windows setup](#windows-setup).
+
+</details>
+
+<details>
+<summary><strong>SSH refused after a reboot</strong></summary>
+
+The unlock did not fully apply. Run `./flash.sh unlock` again.
+
+</details>
+
+<details>
+<summary><strong>Backup folder is very large</strong></summary>
+
+Expected. Every partition is imaged; `mtd5` and `mtd6` alone are approximately 140 MB and 90 MB. `--full-chip` adds more.
+
+</details>
+
+<details>
+<summary><strong>How does the unlock work?</strong></summary>
 
 `/WCGI`, the router's JSON-RPC endpoint, includes a password handler that builds a shell command containing your password — unescaped. A password containing `$( ... )` is therefore *executed* as root. The firmware's password rules are the constraint: 8–32 characters, no `|`, but `$`, `(`, `)`, `{`, `}`, and `${IFS}` are accepted. The installer is therefore delivered in two steps, each within the 32-character limit:
 
@@ -363,7 +331,10 @@ Factory secret locations — relevant because the backup collects them:
 - U-boot console credentials are **not** in the u-boot environment. They are stored as plain `KEY=VALUE` text in the **MFG partition (`/dev/mtd7`)**, alongside the Wi-Fi PSK and web password.
 - The partition named `u-boot-env` (`mtd2`) is **empty**. The real environment is in the UBI volume **`/dev/ubi0_0`** (inside mtd5), per `/etc/fw_env.config`. A second vendor-specific environment is in **mtd8**.
 
-## What is in a backup
+</details>
+
+<details>
+<summary><strong>What is in a backup?</strong></summary>
 
 ```
 AirFiber-XXXXXX/
@@ -381,6 +352,20 @@ Restoring a single partition (only if you understand the implications):
 scp backup/mtd1_BL2.bin root@192.168.31.1:/tmp/
 ssh root@192.168.31.1 'mtd write /tmp/mtd1_BL2.bin BL2'
 ```
+
+</details>
+
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| **SSH** | Secure remote terminal — how you log in to and control the router from your computer. |
+| **root** | The all-powerful administrator account on a Linux system. |
+| **Firmware** | The operating system stored inside the router. |
+| **Partition** | A named section of the flash chip (the MFG partition holds factory passwords). |
+| **u-boot** | The small bootloader that starts the router before the main OS loads. |
+| **UART** | A serial port on the circuit board, used when software access is not enough. |
+| **`/WCGI`** | The router's internal web API — what its admin web page communicates with. |
 
 ## What is next — OpenWrt
 
