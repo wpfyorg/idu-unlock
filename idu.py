@@ -38,6 +38,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import socket
 import socketserver
 import string
@@ -301,14 +302,21 @@ class Callback:
         _Beacon.document = document.encode()
         _Beacon.hits = []
         _Beacon.logfile = logfile
-        socketserver.TCPServer.allow_reuse_address = True
+        # On Windows SO_REUSEADDR also lets a second socket claim a port another
+        # process is already serving, which would split the router's requests
+        # between us and that process. Bind exclusively there instead.
+        socketserver.TCPServer.allow_reuse_address = os.name != "nt"
         try:
             self.server = socketserver.TCPServer(("0.0.0.0", port), _Beacon)
         except OSError as problem:
+            if os.name == "nt":
+                holder = f"netstat -ano | findstr :{port}"
+            else:
+                holder = f"lsof -nP -iTCP:{port} -sTCP:LISTEN"
             raise IduError(
                 f"cannot listen on port {port}: {problem}\n"
                 f"    The router has to fetch the installer from us, so that port must "
-                f"be free.\n    Find the holder with:  lsof -nP -iTCP:{port} -sTCP:LISTEN"
+                f"be free.\n    Find the holder with:  {holder}"
             ) from problem
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
@@ -337,6 +345,22 @@ def address_reaching(host: str) -> str:
 # --------------------------------------------------------------------------- #
 # ssh / scp transport
 # --------------------------------------------------------------------------- #
+def require_tool(name: str) -> None:
+    """Fail readably when ssh/scp/ssh-keygen is missing.
+
+    Windows ships the OpenSSH client as an optional feature, so a bare
+    ``FileNotFoundError`` from subprocess is the usual first experience there.
+    """
+    if shutil.which(name) is not None:
+        return
+    raise IduError(
+        f"`{name}` is not installed, or not on PATH.\n"
+        "    Windows: install the OpenSSH client once, in an administrator "
+        "PowerShell:\n"
+        "      Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0\n"
+        "    Linux: install the openssh-client package (macOS has it built in).")
+
+
 def _expect(argv: list, password: str, timeout: int) -> subprocess.CompletedProcess:
     """Run argv under expect, answering a password prompt once."""
     tcl = """
@@ -362,6 +386,7 @@ class Shell:
                  user: str = "root"):
         if key is None and password is None:
             raise ValueError("Shell needs a key or a password")
+        require_tool("ssh")
         self.host, self.key, self.password = host, key, password
         self.user = user
 
@@ -392,6 +417,7 @@ class Shell:
 
     def send(self, local: str, remote: str, timeout: int = 900) -> None:
         # -O forces the legacy scp protocol, which dropbear speaks.
+        require_tool("scp")
         argv = ["scp", "-O"] + self._opts() + [local, f"{self.user}@{self.host}:{remote}"]
         result = self._exec(argv, timeout)
         if result.returncode != 0:
@@ -849,6 +875,7 @@ def _default_key() -> str:
 def _ensure_key(path: str) -> str:
     if os.path.exists(path):
         return path
+    require_tool("ssh-keygen")
     print(f"[*] generating an RSA key at {path}")
     subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "2048", "-N", "", "-C", "idu",
                     "-f", path], check=True, stdout=subprocess.DEVNULL)

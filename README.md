@@ -50,11 +50,12 @@ This little toolkit talks to your router's own web interface and does two things
 It does **not** write firmware. Nothing here flashes OpenWrt or otherwise
 changes the router's operating system.
 
-Two files do the work:
+Two files do the work — pick the driver for your computer:
 
 ```
-flash.sh     the friendly driver — start here, it asks you questions
-idu.py       the engine under it (drive it directly if you're scripting)
+flash.sh     the friendly driver for macOS and Linux — start here
+flash.ps1    the same driver for Windows (PowerShell)
+idu.py       the engine under both (drive it directly if you're scripting)
 ```
 
 ---
@@ -71,6 +72,10 @@ Not sure? Run `./flash.sh check` — it changes nothing and tells you. A unit on
 firmware `R2.0.19.5` can be unlocked; on `R3.2.3` and newer the vendor closed
 the door this tool uses, and it will say *not unlockable*.
 
+*(On Windows every `./flash.sh` in this README is `.\flash.ps1` — see
+[On Windows](#on-windows). If you've not downloaded anything yet, start at
+[Getting the files](#getting-the-files-start-here-if-this-is-all-new).)*
+
 Two prerequisites:
 
 - **The router must already be set up** — setup wizard finished, admin password
@@ -82,26 +87,96 @@ Two prerequisites:
 
 - The router, powered on, with your computer on the same network as it.
 - The router's **admin password** — the one you use to log into its web page.
-- A Mac or Linux computer with **Python 3** (macOS: `xcode-select --install`
-  provides it; Linux: your package manager). `flash.sh` installs anything else
-  it needs into a local `.venv/` folder on first run.
+- A **Mac, Linux or Windows** computer with **Python 3** (macOS:
+  `xcode-select --install` provides it; Linux: your package manager; Windows:
+  `winget install Python.Python.3.12`). The launcher installs anything else it
+  needs into a local `.venv/` folder on first run.
+- On Windows, also the **OpenSSH client**, and use `flash.ps1` rather than
+  `flash.sh` — see *On Windows* below.
 - On Linux only: the **`expect`** program (`sudo apt install expect` or
   similar — macOS has it built in). It's used when a password has to be typed
   into SSH for you.
 
 Want to install OpenWrt as well? This tool doesn't do that — it stops at root
-access and a backup. Prebuilt images for these units (for manual installs) are
-in the
+access and a backup, on purpose. When you're ready to go further, the manual
+procedure is written out slowly, step by step, in
+[**OPENWRT.md**](OPENWRT.md) — with prebuilt images in the
 [**firmware download folder**](https://drive.google.com/drive/folders/16OvJoZeZFTx4dXRZWfGMlsy-RXDB54_h).
+
+## Getting the files (start here if this is all new)
+
+You need two things: the project folder, and a **terminal** — a window where you
+type commands instead of clicking — open *inside* that folder.
+
+**1. Download the project.** Pick whichever of these you understand:
+
+- **With git**, if you have it (or want it — it makes updating easy):
+
+  ```sh
+  git clone https://github.com/wpfyorg/idu-unlock.git
+  ```
+
+  No git? macOS offers to install it the first time you type `git` (say yes);
+  on Linux it's `sudo apt install git`; on Windows, `winget install Git.Git`.
+- **Without git:** open
+  [the repository page](https://github.com/wpfyorg/idu-unlock), click the green
+  **Code** button, choose **Download ZIP**, then unpack it (Windows:
+  right-click the file → *Extract All*; macOS: double-click it).
+
+**2. Open a terminal.**
+
+| Your computer | How to open one |
+| --- | --- |
+| macOS | `Cmd`+`Space`, type `Terminal`, press Enter |
+| Windows | press `Win`, type `PowerShell`, press Enter |
+| Linux | `Ctrl`+`Alt`+`T` on most desktops |
+
+**3. Move into the folder** with `cd` (it stands for *change directory*). Type
+`cd` and a space, then drag the `idu-unlock` folder from your file manager onto
+the terminal window — that types the path for you. Press Enter.
+
+Or type the path yourself. Downloads land in `Downloads` unless you moved them:
+
+```sh
+cd ~/Downloads/idu-unlock        # macOS / Linux
+cd $HOME\Downloads\idu-unlock    # Windows PowerShell
+```
+
+**4. Check you're in the right place.** List what's in the folder:
+
+```sh
+ls
+```
+
+That's a lowercase **L**, not a one — and it works the same in PowerShell. You
+should see `flash.sh`, `flash.ps1` and `idu.py`. If you see only another folder
+(unzipping often adds an extra level), go into it with `cd idu-unlock` and
+`ls` again.
+
+**5. Run it.** From here on, everything in this README uses `./flash.sh`; on
+Windows use `.\flash.ps1` instead:
+
+```sh
+./flash.sh check        # macOS / Linux
+.\flash.ps1 check       # Windows
+```
+
+> **Getting "permission denied"?** A ZIP download loses file permissions (a git
+> clone keeps them). Fix it once, in the folder:
+>
+> ```sh
+> chmod +x flash.sh idu.py
+> ```
 
 ## The whole job, step by step
 
-**Step 0 — log out of the router's web page.** The router allows only *one*
-admin login at a time, so close its web interface first. Then, in this folder:
+> **On Windows**, every `./flash.sh` below is `.\flash.ps1` instead — otherwise
+> the steps are identical. See *On Windows* at the end of this section.
 
-```sh
-cd idu-unlock
-```
+**Step 0 — log out of the router's web page, and be in the project folder.** The
+router allows only *one* admin login at a time, so close its web interface
+first. If you haven't downloaded the project and `cd`'d into it yet, do
+*Getting the files* above — then come back here.
 
 **Step 1 — look before you leap:**
 
@@ -140,6 +215,64 @@ end it prints the exact `ssh` command for your unit's address.
 That's the whole job — or run `./flash.sh` with no arguments and it walks the
 same steps in order.
 
+## On Windows
+
+Windows has everything this tool needs — Python, OpenSSH, a firewall — but not
+the `flash.sh` wrapper, because that's a bash script. Use **`flash.ps1`**:
+same commands, same questions, same options.
+
+**One-time setup**
+
+1. **Python 3** — `winget install Python.Python.3.12`. If the installer offers a
+   checkbox for *Add python.exe to PATH*, tick it.
+2. **OpenSSH client** — Windows 10 and 11 normally ship it. Check by running
+   `ssh -V`; if that isn't recognised, open PowerShell **as administrator** and
+   run:
+
+   ```powershell
+   Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+   ```
+
+**Run it**
+
+Open PowerShell, `cd` into the project folder, then:
+
+```powershell
+.\flash.ps1 check      # can this unit be unlocked? (changes nothing)
+.\flash.ps1 backup     # unlock it, then back it up
+```
+
+The `.\` is not optional: PowerShell won't run a script from the current folder
+by name alone. If it answers *"running scripts is disabled on this system"*,
+relax that for this window only and try again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+That lasts until you close the window — nothing about your system is changed
+permanently.
+
+**The one Windows-specific catch: port 80.** To unlock the router, the tool
+starts a tiny web server on your PC and the *router* fetches the installer from
+it. The first time you unlock, Windows Firewall asks whether to allow it — click
+**Allow**, for **Private** networks (that's your home network; *Public* is what
+you'd be on in a café).
+
+If an unlock ends in *"the router did not call back"*, the firewall is still the
+likely culprit: allow `python.exe`, or run PowerShell as administrator so the
+rule can be created. Failing that, something else already owns port 80 — IIS and
+the *World Wide Web Publishing Service* are the usual suspects. To see what:
+
+```powershell
+netstat -ano | findstr :80
+```
+
+A reboot clears a stuck holder.
+
+**Rather not?** `flash.sh` runs unchanged under **WSL** or **Git Bash**, exactly
+as it does on Linux. Native PowerShell is just fewer moving parts.
+
 ## All the commands
 
 | Command | What it does | Touches anything? |
@@ -150,17 +283,27 @@ same steps in order.
 | `./flash.sh unlock` | Root SSH that survives reboots | installs a key |
 | `./flash.sh` | Unlock, then back up, with prompts | installs a key |
 
+On Windows use `.\flash.ps1` in place of `./flash.sh` for every one of these.
+
 Add-ons for any command: `--router URL` (default `https://192.168.31.1`),
-`--password PW`, `--key PATH` (default `~/.ssh/idu_rsa`).
+`--password PW`, `--key PATH` (default `~/.ssh/idu_rsa`). In PowerShell the
+single-dash spellings (`-Router`, `-Password`, `-Key`) work too.
 
 Sorting a pile of units? `check` exits `0` when unlockable and `2` when not, so
-a shell loop can triage them without you reading anything:
+a loop can triage them without you reading anything:
 
 ```sh
 for ip in $(cat idus.txt); do
   ./flash.sh --router "https://$ip" --password "$PW" check
   echo "$ip -> $?"
 done
+```
+
+```powershell
+foreach ($ip in Get-Content idus.txt) {
+  .\flash.ps1 --router "https://$ip" --password $PW check
+  "$ip -> $LASTEXITCODE"
+}
 ```
 
 ### Driving the engine directly
@@ -196,7 +339,19 @@ Same commands, plus `check --json` (machine-readable verdict) and
   this repo can unlock it.
 - **"nothing arrives at the callback"** — your computer's firewall is probably
   eating the router's requests; the tool needs your machine reachable on
-  port 80 and on the router's own subnet.
+  port 80 and on the router's own subnet. On Windows, allow `python.exe` through
+  the firewall, or run PowerShell as administrator — see *On Windows* above.
+- **`cd`: "no such file or directory"** — the path is wrong. Type `ls` to see
+  where you are, and drag the folder onto the terminal to get its path right.
+- **`Permission denied` running `./flash.sh`** — a ZIP download drops the
+  executable bit; run `chmod +x flash.sh idu.py` once.
+- **Windows: *"running scripts is disabled on this system"*** — allow scripts
+  for the current window with
+  `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
+- **Windows: *"`ssh` is not recognized"*** — install the OpenSSH client, under
+  *On Windows* above.
+- **"`ssh` is not installed, or not on PATH"** — that's this tool saying the
+  same thing, with the install command for your platform.
 - **SSH refused after a reboot** — the unlock didn't fully land; run
   `./flash.sh unlock` again.
 - **The backup folder is huge** — normal. Every partition is imaged; mtd5 and
@@ -270,9 +425,10 @@ Written as a clean-room implementation: the protocol flow is the device's own
 API, and the code shares nothing substantive with any existing PoC (the only
 overlaps are Python/HTTP idioms such as the `application/json` header).
 
-An earlier version of this project also automated the community's two-stage
-OpenWrt install; that is not part of this tool. The procedure itself is
-documented in
+An earlier version of this project also *automated* the community's two-stage
+OpenWrt install; that is not part of this tool, and nothing here writes firmware.
+The procedure itself is documented in
 [the-diy-daddy/6j01_6j11](https://github.com/the-diy-daddy/6j01_6j11) — credit
-for working it out belongs there. That repository ships no licence, and neither
-did the PoC this work started from, so neither is redistributed here.
+for working it out belongs there. It is also written out for typing by hand in
+[OPENWRT.md](OPENWRT.md). That repository ships no licence, and neither did the
+PoC this work started from, so neither is redistributed here.
