@@ -51,15 +51,40 @@ done
 [ -n "$CMD" ] || CMD="auto"
 
 # ---- an interpreter that has `requests` ---------------------------------- #
+#
+# urllib3 v2 requires OpenSSL 1.1.1+ and complains on anything else — which
+# includes every Python Apple ships, linked against LibreSSL. This tool only
+# ever talks to the router with verification off, so the still-maintained
+# urllib3 1.x costs nothing and keeps the output clean.
+tls_ok() {
+  "$1" -c 'import ssl, sys
+sys.exit(0 if ssl.OPENSSL_VERSION.startswith("OpenSSL ")
+         and ssl.OPENSSL_VERSION_INFO >= (1, 1, 1) else 1)' >/dev/null 2>&1
+}
+
+deps_ok() {
+  "$1" -c 'import ssl, sys
+try:
+    import requests, urllib3
+except ImportError:
+    sys.exit(1)
+tls = (ssl.OPENSSL_VERSION.startswith("OpenSSL ")
+       and ssl.OPENSSL_VERSION_INFO >= (1, 1, 1))
+sys.exit(0 if tls or urllib3.__version__.startswith("1.") else 1)' >/dev/null 2>&1
+}
+
+PIN=""
+tls_ok python3 || PIN="urllib3<2"
+
 PY=""
-if python3 -c 'import requests' >/dev/null 2>&1; then
+if deps_ok python3; then
   PY="python3"
-elif [ -x "$HERE/.venv/bin/python" ] && "$HERE/.venv/bin/python" -c 'import requests' >/dev/null 2>&1; then
+elif [ -x "$HERE/.venv/bin/python" ] && deps_ok "$HERE/.venv/bin/python"; then
   PY="$HERE/.venv/bin/python"
 else
   say "installing dependencies into $HERE/.venv ..."
   python3 -m venv "$HERE/.venv" || { bad "could not create a venv"; exit 1; }
-  "$HERE/.venv/bin/pip" -q install --upgrade pip requests || { bad "pip failed"; exit 1; }
+  "$HERE/.venv/bin/pip" -q install --upgrade pip requests $PIN || { bad "pip failed"; exit 1; }
   PY="$HERE/.venv/bin/python"
 fi
 

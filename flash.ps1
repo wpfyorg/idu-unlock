@@ -99,6 +99,11 @@ while ($index -lt $args.Count) {
 if (-not $Command) { $Command = 'auto' }
 
 # ---- an interpreter that has `requests` ---------------------------------- #
+#
+# urllib3 v2 requires OpenSSL 1.1.1+ and complains on anything else — which
+# includes every Python Apple ships, linked against LibreSSL. This tool only
+# ever talks to the router with verification off, so the still-maintained
+# urllib3 1.x costs nothing and keeps the output clean.
 function Test-Python {
   param([string]$Exe, [string[]]$Prefix = @(), [string]$Code)
   $probe = $Prefix + @('-c', $Code)
@@ -106,9 +111,32 @@ function Test-Python {
   return ($LASTEXITCODE -eq 0)
 }
 
-$SystemPy = $null      # a working Python 3, whether or not it has `requests`
+function Test-Tls {
+  param([string]$Exe, [string[]]$Prefix = @())
+  $code = 'import ssl, sys; sys.exit(0 if ssl.OPENSSL_VERSION.startswith("OpenSSL ") ' +
+          'and ssl.OPENSSL_VERSION_INFO >= (1, 1, 1) else 1)'
+  return (Test-Python -Exe $Exe -Prefix $Prefix -Code $code)
+}
+
+function Test-Deps {
+  param([string]$Exe, [string[]]$Prefix = @())
+  $code = @(
+    'import ssl, sys'
+    'try:'
+    '    import requests, urllib3'
+    'except ImportError:'
+    '    sys.exit(1)'
+    'tls = (ssl.OPENSSL_VERSION.startswith("OpenSSL ")'
+    '       and ssl.OPENSSL_VERSION_INFO >= (1, 1, 1))'
+    'sys.exit(0 if tls or urllib3.__version__.startswith("1.") else 1)'
+  ) -join "`n"
+  return (Test-Python -Exe $Exe -Prefix $Prefix -Code $code)
+}
+
+$SystemPy = $null      # a working Python 3, regardless of what it has installed
 $PyExe    = $null      # the interpreter we will actually run
 $PyArgs   = @()
+$PyPin    = @()        # dependency pins, if this interpreter's TLS needs them
 
 foreach ($candidate in @(
     [pscustomobject]@{ Exe = 'py';      Args = @('-3') },
@@ -118,9 +146,12 @@ foreach ($candidate in @(
   if (-not (Get-Command $candidate.Exe -ErrorAction SilentlyContinue)) { continue }
   if (-not (Test-Python -Exe $candidate.Exe -Prefix $candidate.Args -Code 'import sys')) { continue }
 
-  if (-not $SystemPy) { $SystemPy = $candidate }
+  if (-not $SystemPy) {
+    $SystemPy = $candidate
+    if (-not (Test-Tls -Exe $candidate.Exe -Prefix $candidate.Args)) { $PyPin = @('urllib3<2') }
+  }
 
-  if (Test-Python -Exe $candidate.Exe -Prefix $candidate.Args -Code 'import requests') {
+  if (Test-Deps -Exe $candidate.Exe -Prefix $candidate.Args) {
     $PyExe  = $candidate.Exe
     $PyArgs = $candidate.Args
     break
@@ -130,7 +161,7 @@ foreach ($candidate in @(
 if (-not $PyExe) {
   $venvPy  = Join-Path $Here '.venv\Scripts\python.exe'
   $venvPip = Join-Path $Here '.venv\Scripts\pip.exe'
-  $usable  = (Test-Path $venvPy) -and (Test-Python -Exe $venvPy -Code 'import requests')
+  $usable  = (Test-Path $venvPy) -and (Test-Deps -Exe $venvPy)
 
   if ($usable) {
     $PyExe = $venvPy
@@ -146,7 +177,7 @@ if (-not $PyExe) {
     $venvArgs = $SystemPy.Args + @('-m', 'venv', (Join-Path $Here '.venv'))
     & $SystemPy.Exe @venvArgs
     if ($LASTEXITCODE -ne 0) { Bad 'could not create a venv'; exit 1 }
-    $pipArgs = @('-q', 'install', '--upgrade', 'pip', 'requests')
+    $pipArgs = @('-q', 'install', '--upgrade', 'pip', 'requests') + $PyPin
     & $venvPip @pipArgs
     if ($LASTEXITCODE -ne 0) { Bad 'pip failed'; exit 1 }
     $PyExe = $venvPy

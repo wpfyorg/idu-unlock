@@ -1,1 +1,7 @@
 requests>=2.25
+
+# urllib3 v2 requires OpenSSL 1.1.1+, and warns on anything else — including the
+# LibreSSL that every Python Apple ships links against. 1.x is still maintained,
+# and this tool only talks to the router with verification off. flash.sh and
+# flash.ps1 apply the same pin when they build the venv.
+urllib3<2; sys_platform == "darwin"

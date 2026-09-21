@@ -120,8 +120,14 @@ class Api:
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         payload = {"id": secrets.token_hex(4), "method": method, "params": params or {}}
-        response = self.http.post(self.url, json=payload, headers=headers,
-                                  timeout=self.timeout)
+        try:
+            response = self.http.post(self.url, json=payload, headers=headers,
+                                      timeout=self.timeout)
+        except requests.exceptions.RequestException as problem:
+            raise IduError(
+                f"cannot reach the router at {self.base} ({type(problem).__name__}).\n"
+                "    Is it powered on, and is this computer on its network?\n"
+                "    If it lives at a different address, pass --router URL.") from problem
         try:
             return response.json()
         except ValueError:

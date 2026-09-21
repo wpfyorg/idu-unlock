@@ -108,6 +108,22 @@ procedure is written out slowly, step by step, in
 You need two things: the project folder, and a **terminal** — a window where you
 type commands instead of clicking — open *inside* that folder.
 
+> **In a hurry?** Open a terminal first (step 2 below), then this one line does
+> steps 1 to 3 for you — downloads the project, unpacks it, and puts you inside
+> it:
+>
+> ```sh
+> curl -L https://github.com/wpfyorg/idu-unlock/archive/refs/heads/main.tar.gz \
+>   | tar xz && cd idu-unlock-main && chmod +x flash.sh idu.py
+> ```
+>
+> ```powershell
+> Invoke-WebRequest https://github.com/wpfyorg/idu-unlock/archive/refs/heads/main.zip -OutFile idu-unlock.zip; Expand-Archive idu-unlock.zip -DestinationPath .; cd idu-unlock-main
+> ```
+>
+> `chmod +x` is there because a downloaded copy loses the "this is runnable"
+> flag that a `git clone` keeps. Then carry on at step 4 to check it worked.
+
 **1. Download the project.** Pick whichever of these you understand:
 
 - **With git**, if you have it (or want it — it makes updating easy):
