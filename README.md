@@ -110,8 +110,8 @@ Unsure whether your unit qualifies? Run the read-only compatibility check — it
 
 Firmware matters:
 
-- `R2.0.19.5` and earlier — unlockable.
-- `R3.2.3` and newer — the vendor closed the vulnerability this tool relies on. The tool will report *not unlockable*, and there is no workaround in this repository.
+- `R3.0.3` and earlier — unlockable via the `/WCGI` `changeUserPassword` command-injection path.
+- `R3.0.4` and newer — unsupported by this web-API method. The tool will report *not unlockable*.
 
 Two conditions apply to all models:
 
@@ -266,7 +266,7 @@ The router locks out after ~5 failures. Wait, then double-check the password.
 <details>
 <summary><strong>check reports not unlockable</strong></summary>
 
-The unit runs `R3.x` firmware. There is no unlock path for it in this repository.
+The unit runs `R3.0.4` or newer firmware, which is outside the verified `R3.0.3` web-API compatibility boundary. The UART/OpenWrt procedure in [OPENWRT.md](OPENWRT.md) is a separate manual route; it is not automated by this tool.
 
 </details>
 
