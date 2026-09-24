@@ -545,10 +545,11 @@ class Verdict:
     firmware: str
     vectors: list
     evidence: list
+    test_required: bool = False
 
     @property
     def unlockable(self) -> bool:
-        return bool(self.vectors)
+        return bool(self.vectors) and not self.test_required
 
 
 def firmware_version(api: Api) -> str:
@@ -573,7 +574,7 @@ def check(api: Api) -> Verdict:
     """Decide whether a unit can be unlocked — WITHOUT changing anything.
 
     A read-only probe: the firmware release says whether the
-    changeUserPassword handler predates the verified R3.0.4 hardening.
+    changeUserPassword handler version is only a compatibility hint.
     """
     model = api.device.model if api.device else "?"
     version = firmware_version(api)
@@ -583,22 +584,28 @@ def check(api: Api) -> Verdict:
     vectors = []
 
     if release is None:
-        evidence.append("unrecognised version string")
+        vectors.append(PasswordVector.name)
+        evidence.append("unrecognised version string; test the API with unlock")
+        test_required = True
     elif _supported_release(release):
         vectors.append(PasswordVector.name)
         evidence.append("release <= R3.0.3: changeUserPassword is injectable")
+        test_required = False
     else:
-        evidence.append("release > R3.0.3: changeUserPassword is unsupported")
+        vectors.append(PasswordVector.name)
+        evidence.append("release > R3.0.3: test the API with unlock")
+        test_required = True
 
-    return Verdict(model=model, firmware=version, vectors=vectors, evidence=evidence)
+    return Verdict(model=model, firmware=version, vectors=vectors,
+                   evidence=evidence, test_required=test_required)
 
 
 def unlock(api: Api, key_path: str, password: str, port: int = 80,
            patience: int = 900) -> None:
     """Exploit the API to install our key and gain root SSH.
 
-    The only vector is the changeUserPassword bug, which is supported through
-    R3.0.3 and hardened from R3.0.4 onward.
+    The firmware version is informational; the result of this API exploit is
+    authoritative.
     """
     pub_path = key_path + ".pub"
     if not os.path.exists(pub_path):
@@ -644,8 +651,8 @@ def unlock(api: Api, key_path: str, password: str, port: int = 80,
 
     raise IduError(
         f"{PasswordVector.name} did not land:\n"
-        "    Either this unit is newer than R3.0.3 (the password handler is\n"
-        "    unsupported from R3.0.4 onward) or the API is locked down. The u-boot/UART console\n"
+        "    The API exploit did not succeed. The firmware may have hardened the\n"
+        "    password handler or the API may be locked down. The u-boot/UART console\n"
         "    is then the remaining route.")
 
 
@@ -941,15 +948,17 @@ def main(argv: list | None = None) -> int:
                 print(json.dumps({
                     "host": api.host, "model": verdict.model,
                     "firmware": verdict.firmware, "unlockable": verdict.unlockable,
+                    "test_required": verdict.test_required,
                     "vectors": verdict.vectors, "evidence": verdict.evidence,
                 }))
             else:
-                state = "YES" if verdict.unlockable else "NO"
+                state = "TEST" if verdict.test_required else "YES"
                 print(f"[+] unlockable: {state}"
-                      + (f"  via {', '.join(verdict.vectors)}" if verdict.unlockable else ""))
+                      + (f"  via {', '.join(verdict.vectors)}"
+                         if verdict.vectors else ""))
                 for line in verdict.evidence:
                     print(f"    - {line}")
-            return 0 if verdict.unlockable else 2
+            return 0 if verdict.test_required or verdict.unlockable else 2
 
     if args.command == "unlock":
         unlock(api, _ensure_key(args.key), args.password, port=args.port,

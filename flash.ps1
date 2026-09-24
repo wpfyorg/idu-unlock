@@ -27,8 +27,8 @@ Provided as is, without warranty, without liability — see the README.
 #>
 
 $ErrorActionPreference = 'Stop'
-# `check` exits 2 for "not unlockable" - a normal answer, not a failure. Make sure
-# a stricter session preference cannot turn that into a thrown error.
+# `check` exits 0 for confirmed or test-required API results. Make sure a stricter
+# session preference cannot turn a normal compatibility result into an error.
 $PSNativeCommandUseErrorActionPreference = $false
 
 $Here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }

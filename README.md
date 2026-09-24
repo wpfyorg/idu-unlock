@@ -78,7 +78,7 @@ idu.py       Core engine used by both launchers (use directly for scripting)
 
 | Command | Purpose | Modifies the router? |
 | --- | --- | --- |
-| `./flash.sh check` | Is this unit unlockable? | No — read-only |
+| `./flash.sh check` | Read firmware/API compatibility; newer firmware may require `unlock` testing | No — read-only |
 | `./flash.sh detect` | Identify model and family | No — read-only |
 | `./flash.sh backup` | Unlock, then save credentials + full flash image | Yes — installs SSH key, then reads |
 | `./flash.sh unlock` | Install persistent root SSH | Yes — installs SSH key |
@@ -110,8 +110,8 @@ Unsure whether your unit qualifies? Run the read-only compatibility check — it
 
 Firmware matters:
 
-- `R3.0.3` and earlier — unlockable via the `/WCGI` `changeUserPassword` command-injection path.
-- `R3.0.4` and newer — unsupported by this web-API method. The tool will report *not unlockable*.
+- `R3.0.3` and earlier — the compatibility check marks this API path as supported.
+- `R3.0.4` and newer — the check reports `TEST`; run `./flash.sh unlock` to test the actual API exploit. The firmware version alone is not treated as proof that the exploit is closed.
 
 Two conditions apply to all models:
 
@@ -264,9 +264,9 @@ The router locks out after ~5 failures. Wait, then double-check the password.
 </details>
 
 <details>
-<summary><strong>check reports not unlockable</strong></summary>
+<summary><strong>check reports TEST</strong></summary>
 
-The unit runs `R3.0.4` or newer firmware, which is outside the verified `R3.0.3` web-API compatibility boundary. The UART/OpenWrt procedure in [OPENWRT.md](OPENWRT.md) is a separate manual route; it is not automated by this tool.
+`check` reports `TEST` for `R3.0.4` or newer firmware. This is not a failure: run `./flash.sh unlock` (or `.\flash.ps1 unlock`) to test the actual `/WCGI` API exploit. The unlock result is authoritative; a firmware version alone does not determine whether the exploit works.
 
 </details>
 

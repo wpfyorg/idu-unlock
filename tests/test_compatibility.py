@@ -28,28 +28,26 @@ class ReleaseParsingTests(unittest.TestCase):
 
 
 class CompatibilityTests(unittest.TestCase):
-    def assert_release(self, version, unlockable):
+    def assert_release(self, version, test_required):
         verdict = idu.check(FakeApi(version))
-        self.assertEqual(verdict.unlockable, unlockable)
-        self.assertEqual(
-            verdict.vectors,
-            [idu.PasswordVector.name] if unlockable else [],
-        )
+        self.assertEqual(verdict.test_required, test_required)
+        self.assertEqual(verdict.unlockable, not test_required)
+        self.assertEqual(verdict.vectors, [idu.PasswordVector.name])
 
-    def test_r2_release_is_unlockable(self):
-        self.assert_release("JIO_JIDU6701_R2.0.19.5", True)
+    def test_r2_release_is_confirmed(self):
+        self.assert_release("JIO_JIDU6701_R2.0.19.5", False)
 
-    def test_r3_0_3_is_unlockable(self):
-        self.assert_release("ARCNJIO_JIDU6101_R3.0.3", True)
+    def test_r3_0_3_is_confirmed(self):
+        self.assert_release("ARCNJIO_JIDU6101_R3.0.3", False)
 
-    def test_r3_0_4_is_not_unlockable(self):
-        self.assert_release("ARCNJIO_JIDU6101_R3.0.4", False)
+    def test_r3_0_4_requires_api_test(self):
+        self.assert_release("ARCNJIO_JIDU6101_R3.0.4", True)
 
-    def test_later_patch_is_not_unlockable(self):
-        self.assert_release("ARCNJIO_JIDU6101_R3.0.3.1", False)
+    def test_later_patch_requires_api_test(self):
+        self.assert_release("ARCNJIO_JIDU6101_R3.0.3.1", True)
 
-    def test_unknown_version_is_not_unlockable(self):
-        self.assert_release("ARCNJIO_JIDU6101", False)
+    def test_unknown_version_requires_api_test(self):
+        self.assert_release("ARCNJIO_JIDU6101", True)
 
 
 if __name__ == "__main__":
