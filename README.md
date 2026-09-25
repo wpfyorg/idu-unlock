@@ -147,8 +147,9 @@ so you just press Enter at the password prompt.
 
 **Step by step:**
 
-0. **Prepare.** Log out of the router's web page — it permits only one admin
-   login at a time — and open a terminal in the project folder.
+0. **Prepare.** Open a terminal in the project folder. If you are logged in to the
+   router's web page, expect to be logged out — it permits only one admin session,
+   and the tool takes a sitting one over rather than waiting for it.
 1. **Identify** (read-only): `./flash.sh detect`.
 2. **Back up** (do not skip) — see [Backup](#backup) below.
 3. **Connect** with the `ssh` command printed at the end. The unlock also

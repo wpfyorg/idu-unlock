@@ -99,10 +99,21 @@ ed25519.
 ## The session dance
 
 The backend is fussy and permits only one admin session at a time:
-`preLogin` → `login` (retrying while `ERR_LOGIN_DUPLICATE_ADMIN`) → `postLogin`,
-after which every call needs `Authorization: Bearer <two-part-token>`.
+`preLogin` → `login` → `postLogin`, after which every call needs both
+`Authorization: Bearer <bearer>` *and* the `sysauth` cookie the login reply hands
+back. The reply's token is `<bearer>-<session>` — the first half goes in the
+header, the second in the cookie — and the cookie is set with
+`path=https://<host>`, which is not a legal cookie path, so `requests` discards
+it unless it is re-stored against `/`. Without that, every call after login
+answers `ERR_UNAUTHORIZED_OR_EXPIRED`, which reads like a hardened API rather
+than a cookie the client threw away.
+
 `Api.session()` is a context manager that does all of it and releases the session
-on the way out — leaving one open is what causes the duplicate-session lockout.
+on the way out. Releasing is courtesy, not a requirement: a session someone else
+left sitting is answered with `ERR_LOGIN_DUPLICATE_ADMIN`, and rather than wait
+we take it over the way the vendor's own web UI does — `postLogin` naming that
+session's `loggedId`. On a `6j11` the sitting slot never expires, so waiting
+cannot work and logging out of the web UI does not clear it either.
 
 The target is the **guest** account (`userType=2`); that value keeps the handler
 off its admin-session-kill branch.

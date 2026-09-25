@@ -106,9 +106,13 @@ class Api:
     """JSON-RPC client for /WCGI, with the (fiddly) login dance baked in.
 
     The sequence the backend insists on: preLogin, login, then postLogin with
-    ``Authorization: Bearer <two-part-token>`` — every later call needs the same
-    header. Only one admin session may exist at a time, and an activated one
-    does not expire quickly, so callers must release it via logout().
+    ``Authorization: Bearer <bearer>`` — and every later call needs that header
+    *and* the ``sysauth`` cookie the login reply hands back. The reply's token is
+    ``<bearer>-<session>``, split between the two.
+
+    Only one admin session may exist at a time. A session someone else left
+    sitting is taken over rather than waited out, because on some units its slot
+    never expires; logout() is then courtesy rather than a requirement.
     """
 
     def __init__(self, base: str, timeout: float = 20.0):
@@ -136,10 +140,31 @@ class Api:
                 f"cannot reach the router at {self.base} ({type(problem).__name__}).\n"
                 "    Is it powered on, and is this computer on its network?\n"
                 "    If it lives at a different address, pass --router URL.") from problem
+        self._absorb_auth_cookie(response)
         try:
             return response.json()
         except ValueError:
             raise IduError(f"{method}: non-JSON reply ({response.text[:120]!r})")
+
+    def _absorb_auth_cookie(self, response) -> None:
+        """Keep the session cookie the router sets with an unusable Path.
+
+        The login reply carries ``Set-Cookie: sysauth=…; Secure; SameSite=Strict;
+        HttpOnly; path=https://<host>``. That "path" is not a legal cookie path,
+        so requests drops the cookie and never sends it back — every call after
+        login is then answered with ERR_UNAUTHORIZED_OR_EXPIRED, which reads like
+        a hardened API rather than a cookie the client threw away. Re-store it
+        against "/" and reuse it for the rest of the session.
+        """
+        raw = response.headers.get("Set-Cookie") or ""
+        try:                                # the joined header can be lossy
+            raw = ", ".join(response.raw.headers.getlist("Set-Cookie")) or raw
+        except Exception:                   # noqa: BLE001
+            pass
+        match = re.search(r"sysauth=([^;,\s]+)", raw)
+        if match:
+            self.http.cookies.set("sysauth", match.group(1),
+                                  domain=self.host, path="/")
 
     @staticmethod
     def _ok(reply: dict) -> bool:
@@ -150,12 +175,28 @@ class Api:
         self.call("preLogin")
 
         deadline = time.time() + patience
+        post = None
         while True:
             reply = self.call("login", {"username": user, "password": password})
             code = reply.get("code")
             if self._ok(reply):
                 break
             if code == "ERR_LOGIN_DUPLICATE_ADMIN":
+                # A sitting session can be taken over the way the vendor's own
+                # web UI does it: answer the refusal with postLogin naming that
+                # session's loggedId. Waiting is not an option on some units —
+                # the slot never expires, so the retry loop below only burns the
+                # whole patience budget and then advises logging out of a web UI
+                # that cannot clear it either.
+                held = reply.get("results") or {}
+                if held.get("token") and held.get("loggedId"):
+                    print("[*] another admin session is open - taking it over "
+                          "(that logs the other one out)", flush=True)
+                    self.token = held["token"].split("-", 1)[0]
+                    post = self.call("postLogin", {
+                        "loggedId": held["loggedId"],
+                        "authHeader": f"Bearer {self.token}"})
+                    break
                 if time.time() >= deadline:
                     raise IduError(
                         "another admin session is still open. Log out of the web UI "
@@ -169,7 +210,12 @@ class Api:
             raise IduError(f"login failed: {code} {reply.get('message', '')}")
 
         results = reply.get("results") or {}
-        self.token = results.get("token")
+        self.token = self.token or results.get("token")   # takeover sets it early
+        if self.token and "-" in self.token:
+            # the reply hands back "<bearer>-<session>": the Authorization header
+            # takes the first half, the sysauth cookie the second
+            self.token, session = self.token.split("-", 1)
+            self.http.cookies.set("sysauth", session, domain=self.host, path="/")
         if not self.token:
             raise IduError("login succeeded but returned no session token")
 
@@ -179,7 +225,8 @@ class Api:
                              board=flags.get("BOARD_NAME", "?"),
                              flags=flags)
 
-        post = self.call("postLogin")
+        if post is None:
+            post = self.call("postLogin")
         if post.get("code") == "ERR_POSTLOGIN_FACTORY_RESET":
             raise IduError(
                 "the router is factory-reset, and its API stays locked until the "

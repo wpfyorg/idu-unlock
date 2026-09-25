@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 
 import idu
@@ -31,6 +33,68 @@ class ReleaseParsingTests(unittest.TestCase):
     def test_rejects_unrecognised_version(self):
         self.assertIsNone(idu._release("ARCNJIO_JIDU6101"))
         self.assertIsNone(idu._release(""))
+
+
+class ApiLoginTests(unittest.TestCase):
+    """The two login quirks: an unusable cookie Path, and a sitting session."""
+
+    FLAGS = {"DEVICE_MODEL": "JIDU6401", "DEVICE_SYSTEM_NAME": "Archadyan",
+             "BOARD_NAME": "MTK"}
+    OK = {"status": "OK", "code": "OK"}
+
+    def _api(self, replies):
+        api = idu.Api("https://192.168.31.1")
+        api.calls = []
+
+        def fake_call(method, params=None):
+            api.calls.append((method, params))
+            return replies.pop(0)
+
+        api.call = fake_call
+        return api
+
+    def _login(self, token="BEARER-SESSION"):
+        return {"status": "OK", "code": "OK_LOGIN",
+                "results": {"token": token, "deviceFlags": self.FLAGS}}
+
+    @staticmethod
+    def _cookies(api):
+        return {cookie.name: cookie.value for cookie in api.http.cookies}
+
+    def test_two_part_token_splits_between_header_and_cookie(self):
+        api = self._api([self.OK, self._login(), self.OK])
+        api.connect("admin", "pw")
+        self.assertEqual(api.token, "BEARER")
+        self.assertEqual(self._cookies(api), {"sysauth": "SESSION"})
+
+    def test_cookie_set_with_an_unusable_path_is_restored(self):
+        class Response:
+            headers = {"Set-Cookie": "sysauth=SID123; Secure; SameSite=Strict; "
+                                     "HttpOnly; path=https://192.168.31.1"}
+
+        api = self._api([])
+        api._absorb_auth_cookie(Response())
+        self.assertEqual(self._cookies(api), {"sysauth": "SID123"})
+
+    def test_duplicate_admin_is_taken_over_not_waited_out(self):
+        refusal = {"status": "ERROR", "code": "ERR_LOGIN_DUPLICATE_ADMIN",
+                   "results": {"token": "BEARER-SESSION", "loggedId": "HELD"}}
+        api = self._api([self.OK, refusal, self.OK])
+        with contextlib.redirect_stdout(io.StringIO()):
+            api.connect("admin", "pw")
+
+        # preLogin, login, postLogin — no retry loop, so no sleep to outlast
+        self.assertEqual([method for method, _ in api.calls],
+                         ["preLogin", "login", "postLogin"])
+        self.assertEqual(api.calls[-1][1],
+                         {"loggedId": "HELD", "authHeader": "Bearer BEARER"})
+
+    def test_duplicate_admin_without_a_logged_id_still_waits(self):
+        refusal = {"status": "ERROR", "code": "ERR_LOGIN_DUPLICATE_ADMIN",
+                   "results": {}}
+        api = self._api([self.OK, refusal])
+        with self.assertRaises(idu.IduError):
+            api.connect("admin", "pw", patience=0)
 
 
 class MfgLayoutTests(unittest.TestCase):

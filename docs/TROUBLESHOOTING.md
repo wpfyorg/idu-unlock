@@ -10,8 +10,8 @@ Two conditions cause most failures:
 1. **The router must be fully set up.** A factory-reset unit accepts the login but
    keeps its whole web API locked until its setup wizard has been completed in the
    browser. Reset it, finish the wizard, then retry.
-2. **Only one admin session may exist.** Log out of the router's web page (or
-   reboot the router) before running the tool.
+2. **Only one admin session may exist.** The tool takes a sitting one over rather
+   than waiting for it, so this normally looks after itself — see below.
 
 The router also temporarily blocks logins after roughly five wrong passwords.
 Verify the password instead of retrying blindly.
@@ -21,8 +21,15 @@ Verify the password instead of retrying blindly.
 <details>
 <summary><strong>Another admin session is already open</strong></summary>
 
-Log out of the router's web page, or reboot the router, and retry. One admin
-session at a time is a hard limit of the backend.
+The tool answers `ERR_LOGIN_DUPLICATE_ADMIN` by **taking the sitting session
+over** — the way the vendor's own web UI does — and says
+`[*] another admin session is open - taking it over`. That does log the other
+session out, so save anything you had open in the router web UI first.
+
+If you see it fall back to the retry loop instead, the refusal arrived without a
+`loggedId` to take over, so waiting is all that is left. Logging out of the web
+UI will not help on units where the slot never expires (a `6j11`, for one) —
+reboot the router, or run with `--patience` and let it wait.
 
 </details>
 
