@@ -11,7 +11,9 @@
 # Options:
 #   --router URL    router base URL (default https://192.168.31.1)
 #   --password P    router admin password (prompted if omitted)
-#   --key PATH      SSH key (default ~/.ssh/idu_rsa)
+#   --key PATH      SSH key. Optional: with no key root is left passwordless and
+#                   nothing of ours is installed on the router
+#   -v, --verbose   show the per-command detail behind each method
 #
 # The router must be SET UP, not factory-fresh: a reset IDU keeps its API locked
 # until the setup wizard is completed in the web UI. Reset it, finish the wizard
@@ -26,14 +28,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROUTER="${ROUTER:-https://192.168.31.1}"
 PASSWORD="${PASSWORD:-}"
 KEY="${KEY:-}"
+VERBOSE=0
+NOBANNER=0
 CMD=""
 
+# Progress prefixes: [*] working, [+] success, [-] failed.
 say()  { printf '\033[1;34m[*]\033[0m %s\n' "$*"; }
-good() { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
-bad()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; }
+bad()  { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; }
 
 usage() {
-  sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -42,6 +46,7 @@ while [ $# -gt 0 ]; do
     --router)   ROUTER="$2";   shift 2 ;;
     --password) PASSWORD="$2"; shift 2 ;;
     --key)      KEY="$2";      shift 2 ;;
+    -v|--verbose) VERBOSE=1;   shift ;;
     -h|--help)  usage; exit 0 ;;
     flash)      bad "this tool no longer writes firmware — use it for root access and backups."; exit 2 ;;
     -*)         bad "unknown option: $1"; usage; exit 2 ;;
@@ -89,27 +94,41 @@ else
 fi
 
 # ---- ssh key ------------------------------------------------------------- #
-[ -n "$KEY" ] || KEY="$HOME/.ssh/idu_rsa"
+# Optional, and never generated: with no --key the unlock leaves root
+# passwordless and installs nothing on the router.
 
 # ---- password ------------------------------------------------------------ #
 if [ -z "$PASSWORD" ]; then
-  printf 'Enter the router admin password (set during the router setup): '
+  printf 'Router admin password: '
   read -rs PASSWORD
   echo
 fi
 [ -n "$PASSWORD" ] || { bad "no password given"; exit 2; }
 
-idu() { "$PY" "$HERE/idu.py" --router "$ROUTER" --password "$PASSWORD" --key "$KEY" "$@"; }
+# -u keeps Python's output unbuffered: piped through the driver it would
+# otherwise sit in a block buffer and make a slow login look like a hang.
+idu() {
+  local _args=( --router "$ROUTER" --password "$PASSWORD" )
+  [ -n "$KEY" ] && _args+=( --key "$KEY" )
+  [ "$VERBOSE" -eq 1 ] && _args+=( --verbose )
+  [ "$NOBANNER" -eq 1 ] && _args+=( --no-banner )
+  "$PY" -u "$HERE/idu.py" "${_args[@]}" "$@"
+}
 
 describe() {
-  say "checking $ROUTER ..."
-  if ! idu detect; then
+  say "Connecting to ${ROUTER#*//}"
+  local out
+  if ! out="$(idu detect)"; then
     bad "could not take over the router. Usual causes:"
     bad "  * it is unreachable, or an admin session is already open;"
-    bad "  * it is factory-reset — finish the setup wizard in the web UI first;"
+    bad "  * it is factory-reset - finish the setup wizard in the web UI first;"
     bad "  * the password is wrong (the router locks out after ~5 tries)."
     exit 1
   fi
+  # MODEL=/FAMILY= are how this driver reads the family; the user gets the two
+  # human-readable lines instead.
+  printf '%s\n' "$out" | grep -v -e '^MODEL=' -e '^FAMILY='
+  NOBANNER=1        # shown once, above - don't repeat it on every later call
 }
 
 case "$CMD" in
@@ -125,21 +144,17 @@ case "$CMD" in
   unlock)
     describe
     idu unlock || exit 1
-    good "try: ssh -i $KEY -o IdentitiesOnly=yes root@${ROUTER#*//}"
     ;;
 
   backup)
     describe
     idu unlock || exit 1
     idu backup --outdir "$PWD" || exit 1
-    good "backup written under $PWD"
     ;;
 
   auto)
     describe
     idu unlock || exit 1
     idu backup --outdir "$PWD" || exit 1
-    good "backup written under $PWD"
-    good "try: ssh -i $KEY -o IdentitiesOnly=yes root@${ROUTER#*//}"
     ;;
 esac

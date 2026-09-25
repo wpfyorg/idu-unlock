@@ -12,7 +12,9 @@ is written. The Windows twin of flash.sh: same commands, same options.
 Options:
   --router URL    router base URL (default https://192.168.31.1)
   --password P    router admin password (prompted if omitted)
-  --key PATH      SSH key (default ~\.ssh\idu_rsa)
+  --key PATH      SSH key. Optional: with no key root is left passwordless and
+                  nothing of ours is installed on the router
+  -v, --verbose   show the per-command detail behind each method
 
 The router must be SET UP, not factory-fresh: a reset IDU keeps its API locked
 until the setup wizard is completed in the web UI. Reset it, finish the wizard
@@ -33,9 +35,10 @@ $PSNativeCommandUseErrorActionPreference = $false
 
 $Here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 
-function Say  { param([string]$Text) Write-Host '[*] ' -ForegroundColor Blue  -NoNewline; Write-Host $Text }
-function Good { param([string]$Text) Write-Host '[+] ' -ForegroundColor Green -NoNewline; Write-Host $Text }
-function Bad  { param([string]$Text) Write-Host '[x] ' -ForegroundColor Red   -NoNewline; Write-Host $Text }
+# Progress prefixes: [*] working, [+] success, [-] failed.
+function Say  { param([string]$Text) Write-Host '[*] ' -ForegroundColor Blue   -NoNewline; Write-Host $Text }
+function Good { param([string]$Text) Write-Host '[+] ' -ForegroundColor Green  -NoNewline; Write-Host $Text }
+function Bad  { param([string]$Text) Write-Host '[-] ' -ForegroundColor Red    -NoNewline; Write-Host $Text }
 
 function Show-Usage {
   Write-Host @'
@@ -51,7 +54,9 @@ Commands:
 Options:
   --router URL    router base URL (default https://192.168.31.1)
   --password P    router admin password (prompted if omitted)
-  --key PATH      SSH key (default ~\.ssh\idu_rsa)
+  --key PATH      SSH key. Optional: with no key root is left passwordless and
+                  nothing of ours is installed on the router
+  -v, --verbose   show the per-command detail behind each method
 '@
 }
 
@@ -60,6 +65,8 @@ $Command  = ''
 $Router   = if ($env:ROUTER)   { $env:ROUTER }   else { 'https://192.168.31.1' }
 $Password = if ($env:PASSWORD) { $env:PASSWORD } else { '' }
 $Key      = if ($env:KEY)      { $env:KEY }      else { '' }
+$ShowVerbose = $false
+$NoBanner    = $false
 
 $index = 0
 while ($index -lt $args.Count) {
@@ -81,6 +88,7 @@ while ($index -lt $args.Count) {
     if ($index + 1 -ge $args.Count) { Bad "missing value for $token"; exit 2 }
     $index++; $Key = [string]$args[$index]
   }
+  elseif ($token -in @('-v', '--verbose', '-verbose')) { $ShowVerbose = $true }
   elseif ($token -in @('unlock', 'backup', 'detect', 'check')) {
     $Command = $token
   }
@@ -185,11 +193,12 @@ if (-not $PyExe) {
 }
 
 # ---- ssh key ------------------------------------------------------------- #
-if (-not $Key) { $Key = Join-Path $HOME '.ssh\idu_rsa' }
+# Optional, and never generated: with no --key the unlock leaves root
+# passwordless and installs nothing on the router.
 
 # ---- password ------------------------------------------------------------ #
 if (-not $Password) {
-  $secure = Read-Host -Prompt 'Enter the router admin password (set during the router setup)' -AsSecureString
+  $secure = Read-Host -Prompt 'Router admin password' -AsSecureString
   $Password = (New-Object -TypeName System.Net.NetworkCredential -ArgumentList '', $secure).Password
 }
 if (-not $Password) { Bad 'no password given'; exit 2 }
@@ -198,8 +207,12 @@ function Invoke-Id {
   param([string[]]$IdArgs = @())
   $callArgs  = @()
   $callArgs += $PyArgs
+  $callArgs += '-u'
   $callArgs += (Join-Path $Here 'idu.py')
-  $callArgs += @('--router', $Router, '--password', $Password, '--key', $Key)
+  $callArgs += @('--router', $Router, '--password', $Password)
+  if ($Key) { $callArgs += @('--key', $Key) }
+  if ($ShowVerbose) { $callArgs += '--verbose' }
+  if ($NoBanner) { $callArgs += '--no-banner' }
   $callArgs += $IdArgs
   # straight to the host, so the caller captures only the exit code
   & $PyExe @callArgs | Out-Host
@@ -207,14 +220,33 @@ function Invoke-Id {
 }
 
 function Confirm-Device {
-  Say "checking $Router ..."
-  if ((Invoke-Id @('detect')) -ne 0) {
+  Say "Connecting to $RouterHost"
+  $callArgs  = @()
+  $callArgs += $PyArgs
+  $callArgs += '-u'
+  $callArgs += (Join-Path $Here 'idu.py')
+  $callArgs += @('--router', $Router, '--password', $Password)
+  if ($Key) { $callArgs += @('--key', $Key) }
+  if ($ShowVerbose) { $callArgs += '--verbose' }
+  $callArgs += @('detect')
+  # Captured rather than Tee'd so the MODEL=/FAMILY= machine lines can be dropped
+  # before the user sees them. The "Connecting to" line above already tells them
+  # something is happening, so a slow login no longer looks like a hang.
+  $deviceOutput = & $PyExe @callArgs 2>&1 | ForEach-Object { [string]$_ }
+  $code = $LASTEXITCODE
+  if ($code -ne 0) {
     Bad 'could not take over the router. Usual causes:'
     Bad '  * it is unreachable, or an admin session is already open;'
     Bad '  * it is factory-reset - finish the setup wizard in the web UI first;'
     Bad '  * the password is wrong (the router locks out after ~5 tries).'
     exit 1
   }
+  foreach ($line in $deviceOutput) {
+    if ($line -match '^(MODEL|FAMILY)=') { continue }
+    Write-Host $line
+  }
+  # the banner above is the only one; later engine calls must not repeat it
+  $script:NoBanner = $true
 }
 
 $RouterHost = ($Router -replace '^[A-Za-z][A-Za-z0-9+.-]*://', '') -replace '/.*$', ''
@@ -232,21 +264,17 @@ switch ($Command) {
   'unlock' {
     Confirm-Device
     if ((Invoke-Id @('unlock')) -ne 0) { exit 1 }
-    Good "try: ssh -i `"$Key`" -o IdentitiesOnly=yes root@$RouterHost"
   }
 
   'backup' {
     Confirm-Device
     if ((Invoke-Id @('unlock')) -ne 0) { exit 1 }
     if ((Invoke-Id @('backup', '--outdir', $OutDir)) -ne 0) { exit 1 }
-    Good "backup written under $OutDir"
   }
 
   'auto' {
     Confirm-Device
     if ((Invoke-Id @('unlock')) -ne 0) { exit 1 }
     if ((Invoke-Id @('backup', '--outdir', $OutDir)) -ne 0) { exit 1 }
-    Good "backup written under $OutDir"
-    Good "try: ssh -i `"$Key`" -o IdentitiesOnly=yes root@$RouterHost"
   }
 }

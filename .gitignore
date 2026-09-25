@@ -13,3 +13,4 @@ factory_env.txt
 partitions.txt
 uboot_env.txt
 AGENTS.md
+.commandcode/
