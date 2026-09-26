@@ -377,6 +377,12 @@ See [LICENSE](LICENSE) for the complete terms. That makes this project
 
 The router research and tooling in this repository are implemented independently.
 
+Thanks to **AK Sharma**, who found and fixed two `/WCGI` authentication quirks
+that stall a run — the session cookie is set with a `path` that is not a legal
+cookie path, so `requests` throws it away, and a sitting admin session never
+expires on a `6j11` unit, so waiting for it cannot work. Both fixes are in
+`idu.py`, and they came out of rooting a JIDU6611.
+
 The community OpenWrt flashing procedure documented in [OPENWRT.md](OPENWRT.md)
 builds on work by:
 
