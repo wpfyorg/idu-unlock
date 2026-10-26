@@ -1,5 +1,6 @@
 package com.jioidu.unlock
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -83,6 +84,7 @@ class MainActivity : Activity() {
     }
 
     @Deprecated("Uses ACTION_OPEN_DOCUMENT_TREE for API 26 compatibility")
+    @SuppressLint("WrongConstant") // The picker supplies grant bits at runtime; mask to the two supported flags.
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_BACKUP_FOLDER) return
@@ -92,14 +94,14 @@ class MainActivity : Activity() {
             status.text = "Backup cancelled: no folder selected"
             return
         }
-        val flags = data?.flags ?: 0
-        try {
-            contentResolver.takePersistableUriPermission(
-                uri,
-                flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            )
-        } catch (_: SecurityException) {
-            // A one-session grant can still be used for this backup operation.
+        val grantFlags = (data?.flags ?: 0) and
+            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        if (grantFlags != 0) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, grantFlags)
+            } catch (_: SecurityException) {
+                // A one-session grant can still be used for this backup operation.
+            }
         }
         backupTree = uri
         if (pendingBackupConfirmation) {
