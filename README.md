@@ -318,19 +318,31 @@ unit if root SSH is not already available, then flashes:
 ./firmware/fwflash.sh 6j11     # JIDU6111 / 6411 / 6611 / 6811 / 6911
 ```
 
-On Windows use `.\firmware\fwflash.ps1 6j01`. Images are cached in
-`firmware/downloads/<model>/`, hash-checked on every run, and reused once valid.
-If the unit is locked, macOS/Linux requests `sudo` for the unlock step only
-(local port 80 is privileged); Windows needs an RSA key in `$env:KEY` or at
-`~/.ssh/idu_rsa`. That same Windows key is used by unlock, SSH and SCP. The
-flasher then writes the idle boot slot and finishes with `sysupgrade`.
+On Windows use:
+
+```powershell
+.\firmware\fwflash.ps1 6j01
+.\firmware\fwflash.ps1 6j11
+```
+
+Images are cached in `firmware/downloads/<model>/`, checked against their
+manifest SHA-256 on every run, and reused when valid. The flasher shows the
+model and image plan and asks you to type the model before it contacts or
+unlocks the router; `--yes` skips that confirmation. If root SSH is unavailable,
+it invokes the existing unlocker and prompts for the router admin password.
+macOS/Linux requests `sudo` for that unlock step only, because it needs local
+port 80; the download cache and flashing commands remain under your account.
+On Windows, if unlocking is needed, provide an RSA key through `$env:KEY` or
+`~/.ssh/idu_rsa`. That same key is used for the unlock check, SSH and SCP. If
+root SSH already works, the Windows key is not required.
 
 Back up first — on macOS/Linux run `./flash.sh backup`; on Windows run
 `.\flash.ps1 backup --key $HOME\.ssh\idu_rsa` (see the Windows guide for key
 setup). Flashing is not reversible over the network. The 6101 has no SSH
-flasher: use its UART + TFTP route; the flasher can still download and verify
-its images with `--download-only`. See [firmware/README.md](firmware/README.md)
-for cache, flag, and image-provenance details.
+flasher: use its UART + TFTP route; `./firmware/fwflash.sh 6101 --download-only`
+only downloads and verifies its images. `--download-only` and `--dry-run` do
+not unlock or flash. See [firmware/README.md](firmware/README.md) for the full
+flag list and image-provenance details.
 
 The `6j01` models use the SSH shortcut first, then the official 25.12.6
 sysupgrade; the UART route installs the same official image without the
