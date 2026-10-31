@@ -95,12 +95,30 @@ class FlashScriptTest(unittest.TestCase):
         """`& ssh ...` returns output, so $rc would be an array, not a status."""
         body = (ROOT / "firmware" / "fwflash.ps1").read_text()
         self.assertNotIn("Invoke-Remote", body)
-        for call in ("$rc = Invoke-Ssh", "$rc = Invoke-Scp", "$rc = Test-Ssh"):
+        for call in ("$rc = Invoke-Ssh", "$rc = Invoke-Scp", "(Test-Ssh "):
             self.assertIn(call, body)
         # output must go to the console, not into the caller's variable
         self.assertEqual(body.count("| Out-Host"), 2)
         # 2>&1 turns native stderr into a terminating error on PowerShell 5.1
         self.assertNotIn("2>&1", body)
+
+    def test_flashers_unlock_the_unit_themselves(self):
+        """One command: no separate `./flash.sh unlock` beforehand."""
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        # both hand off to the unlocker in the repo root, with the stock address
+        self.assertIn('ROUTER="https://$STOCK" "$UNLOCKER" unlock', sh)
+        self.assertIn("unlock --router \"https://$Router\"", ps)
+        # the two hosts call out to each other's script, not to a copy
+        self.assertIn('UNLOCKER="$HERE/../flash.sh"', sh)
+        self.assertIn("'flash.ps1'", ps)
+        # the old "unlock first" refusal must not come back
+        for body, name in ((sh, "fwflash.sh"), (ps, "fwflash.ps1")):
+            with self.subTest(script=name):
+                self.assertNotIn("unlock first:", body)
+        # a dry run reaches neither the unit nor the unlocker
+        self.assertIn("would check root SSH", sh)
+        self.assertIn("would check root SSH", ps)
 
     def test_powershell_flasher_is_ascii_so_windows_powershell_5_parses_it(self):
         raw = (ROOT / "firmware" / "fwflash.ps1").read_bytes()

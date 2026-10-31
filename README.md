@@ -296,7 +296,8 @@ Installation is documented separately:
 [guide for each model](docs/models/README.md). Read it completely before
 flashing anything.
 
-Once the unit has root SSH and a backup, the whole install can be one command:
+The whole install is one command — it unlocks the unit if it needs it, then
+flashes:
 
 ```bash
 ./firmware/fwflash.sh 6j01     # JIDU6201 / 6401 / 6601 / 6701
@@ -304,10 +305,12 @@ Once the unit has root SSH and a backup, the whole install can be one command:
 ```
 
 On Windows use `.\firmware\fwflash.ps1 6j01`. It downloads the right images into
-`firmware/downloads/`, verifies their sha256, reuses them on later runs, writes
-the idle boot slot over SSH, and finishes with `sysupgrade`. See
-[firmware/README.md](firmware/README.md) for the details and for what the mirror
-does and does not vouch for.
+`firmware/downloads/`, verifies their sha256, reuses them on later runs, unlocks
+the unit if root SSH is not already there (asking for the router admin password),
+writes the idle boot slot over SSH, and finishes with `sysupgrade`. Back the unit
+up first with `./flash.sh backup` — flashing is not reversible over the network.
+See [firmware/README.md](firmware/README.md) for the details and for what the
+mirror does and does not vouch for.
 
 The `6j01` models use the SSH shortcut first, then the official 25.12.6
 sysupgrade; the UART route installs the same official image without the

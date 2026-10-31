@@ -2,8 +2,8 @@
 #
 # fwflash.sh — fetch and flash an OpenWrt image for a JIDU router.
 #
-#   ./fwflash.sh 6j01            flash a JIDU6J01 over stock root SSH
-#   ./fwflash.sh 6j11            flash a JIDU6J11 over stock root SSH
+#   ./fwflash.sh 6j01            unlock if needed, then flash a JIDU6J01
+#   ./fwflash.sh 6j11            unlock if needed, then flash a JIDU6J11
 #   ./fwflash.sh 6j11 --smallbuffers
 #                                ...using the reduced-buffer sysupgrade build
 #   ./fwflash.sh 6j01 --download-only
@@ -27,9 +27,10 @@
 # Every file is checked against the sha256 in manifest.json before use, including
 # files already on disk, so a corrupt or half-written download is never flashed.
 #
-# The router must already have root SSH. Get that with ./flash.sh unlock (or the
-# password trick documented upstream). Back the unit up before flashing: this
-# writes over the boot chain and is not reversible over the network.
+# If the unit has no root SSH yet, this runs the unlocker in the repo root
+# (./flash.sh unlock) and asks for the router admin password - so the whole
+# install is one command. Back the unit up if you can: ./flash.sh backup keeps a
+# copy of every partition, and flashing is not reversible over the network.
 #
 # Only run against equipment you own or are explicitly authorised to test.
 # Provided as is, without warranty, without liability — see the README.
@@ -273,16 +274,30 @@ run_until_reboot() {  # 0 or 255: the unit drops the connection as it reboots
   esac
 }
 
-if [ "$DRY_RUN" = 1 ]; then
-  say "would check root SSH on $STOCK"
-else
+# One command: unlock the unit here rather than making the user run
+# ./flash.sh unlock first. The unlocker prompts for the admin password itself,
+# and PASSWORD/ROUTER in the environment are passed straight through to it.
+UNLOCKER="$HERE/../flash.sh"
+
+ensure_root_ssh() {
+  if [ "$DRY_RUN" = 1 ]; then
+    say "would check root SSH on $STOCK, unlocking it first if it does not answer"
+    return 0
+  fi
   say "checking root SSH on $STOCK"
-  "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null || {
-    bad "no root SSH on $STOCK"
-    die "unlock first: ./flash.sh unlock  (and run ./flash.sh backup)"
-  }
+  if "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null; then
+    ok "root SSH is live"
+    return 0
+  fi
+  warn "no root SSH yet: unlocking the unit now (it asks for the admin password)"
+  [ -x "$UNLOCKER" ] || die "this unit is locked and $UNLOCKER is missing"
+  ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
+  "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null \
+    || die "the unit unlocked, but root SSH still does not answer"
   ok "root SSH is live"
-fi
+}
+
+ensure_root_ssh
 
 ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"

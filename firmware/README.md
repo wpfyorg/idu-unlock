@@ -27,8 +27,11 @@ On Windows:
 .\firmware\fwflash.ps1 6j11
 ```
 
-The router needs root SSH first — `./flash.sh unlock`, then `./flash.sh backup`.
-`fwflash` does not unlock anything and does not take a router password.
+The unit does not need to be unlocked first. If root SSH does not answer,
+`fwflash` runs the same unlocker as `./flash.sh unlock` and asks for the router
+admin password, then carries on with the flash. One command does both. A backup
+is still worth taking — `./flash.sh backup` — because flashing is not reversible
+over the network.
 
 ## What it actually does
 
@@ -37,9 +40,11 @@ The router needs root SSH first — `./flash.sh unlock`, then `./flash.sh backup
    matches its sha256** is reused, so the second run downloads nothing.
 3. Downloads anything missing into that folder, verifies sha256, and deletes the
    partial file on failure.
-4. Uploads the factory image and `onrouter/<model>.sh` to the stock unit.
-5. Runs the on-router script, which rewrites the idle UBI slot and reboots.
-6. Waits for the OpenWrt initramfs on `192.168.1.1`, uploads the sysupgrade, and
+4. Proves it can reach the unit over root SSH. If it cannot, it unlocks the unit
+   first (`flash.sh unlock`, asking for the admin password) and checks again.
+5. Uploads the factory image and `onrouter/<model>.sh` to the stock unit.
+6. Runs the on-router script, which rewrites the idle UBI slot and reboots.
+7. Waits for the OpenWrt initramfs on `192.168.1.1`, uploads the sysupgrade, and
    runs `sysupgrade -n`.
 
 Images are stored inside the repo, in `firmware/downloads/<model>/`:

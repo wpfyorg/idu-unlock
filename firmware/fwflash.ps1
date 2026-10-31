@@ -2,8 +2,8 @@
 <#
 fwflash.ps1 - fetch and flash an OpenWrt image for a JIDU router, on Windows.
 
-  .\fwflash.ps1 6j01                 flash a JIDU6J01 over stock root SSH
-  .\fwflash.ps1 6j11                 flash a JIDU6J11 over stock root SSH
+  .\fwflash.ps1 6j01                 unlock if needed, then flash a JIDU6J01
+  .\fwflash.ps1 6j11                 unlock if needed, then flash a JIDU6J11
   .\fwflash.ps1 6j11 -Smallbuffers   ...using the reduced-buffer sysupgrade build
   .\fwflash.ps1 6j01 -DownloadOnly   cache the images, flash nothing
   .\fwflash.ps1 6101                 downloads only: no SSH flasher for 6101
@@ -23,9 +23,10 @@ next run anything already present is reused, so nothing is downloaded twice.
 Every file is checked against the sha256 in manifest.json before use, including
 files already on disk, so a corrupt or half-written download is never flashed.
 
-The router must already have root SSH. Get that with .\flash.ps1 unlock (or the
-password trick documented upstream). Back the unit up before flashing: this
-writes over the boot chain and is not reversible over the network.
+If the unit has no root SSH yet, this runs the unlocker in the repo root
+(.\flash.ps1 unlock) and asks for the router admin password - so the whole
+install is one command. Back the unit up if you can: .\flash.ps1 backup keeps a
+copy of every partition, and flashing is not reversible over the network.
 
 Only run against equipment you own or are explicitly authorised to test.
 Provided as is, without warranty, without liability - see the README.
@@ -242,15 +243,25 @@ function Invoke-Scp ($Options, $Source, $Destination) {
 }
 
 try {
+    # One command: unlock the unit here rather than making the user run
+    # .\flash.ps1 unlock first. The unlocker prompts for the admin password.
     if ($DryRun) {
-        Say "would check root SSH on $Router"
+        Say "would check root SSH on $Router, unlocking it first if it does not answer"
     }
     else {
         Say "checking root SSH on $Router"
-        $rc = Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null>'
-        if ($rc -ne 0) {
-            Bad "no root SSH on $Router"
-            Die 'unlock first: .\flash.ps1 unlock  (and run .\flash.ps1 backup)'
+        if ((Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null') -ne 0) {
+            Warn 'no root SSH yet: unlocking the unit now (it asks for the admin password)'
+            $unlocker = Join-Path (Split-Path $Here -Parent) 'flash.ps1'
+            if (-not (Test-Path $unlocker)) { Die "this unit is locked and $unlocker is missing" }
+            # A separate process: flash.ps1 calls exit, which would end this
+            # script too if it were dot-sourced or invoked with &.
+            $hostExe = (Get-Process -Id $PID).Path
+            & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router"
+            if ($LASTEXITCODE -ne 0) { Die 'the unlock failed; nothing was flashed' }
+            if ((Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null') -ne 0) {
+                Die 'the unit unlocked, but root SSH still does not answer'
+            }
         }
         Ok 'root SSH is live'
     }
