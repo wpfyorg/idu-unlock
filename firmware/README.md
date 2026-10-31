@@ -29,9 +29,14 @@ On Windows:
 
 The unit does not need to be unlocked first. If root SSH does not answer,
 `fwflash` runs the same unlocker as `./flash.sh unlock` and asks for the router
-admin password, then carries on with the flash. One command does both. A backup
-is still worth taking — `./flash.sh backup` — because flashing is not reversible
-over the network.
+admin password, then carries on with the flash. On macOS/Linux it requests
+`sudo` for the unlock step only, because the unlocker needs local port 80; the
+flasher and its repo cache remain owned by your user. On Windows, set `$env:KEY`
+to your RSA key path (or have `~/.ssh/idu_rsa`) before running if the unit needs
+unlocking; the same key is used for unlock, SSH and SCP. One command does both.
+Back up first: `./flash.sh backup` on macOS/Linux, or
+`.\flash.ps1 backup --key $HOME\.ssh\idu_rsa` on Windows (see the Windows
+guide for key setup). Flashing is not reversible over the network.
 
 ## What it actually does
 
@@ -86,8 +91,9 @@ URL and the sha256.
 ## Risk
 
 Flashing replaces the boot chain on hardware with a signed stock bootloader. A
-failed write means UART recovery at best. Back the unit up first, and read the
-per-model page in `docs/models/` before running anything.
+failed write means UART recovery at best. Back the unit up first using the
+platform-specific command above, and read the per-model page in `docs/models/`
+before running anything.
 
 Only use this on equipment you own or are explicitly authorised to test. Provided
 as is, without warranty, without liability — see the [LICENSE](../LICENSE).

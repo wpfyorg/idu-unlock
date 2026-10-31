@@ -238,20 +238,22 @@ if [ "$ASSUME_YES" = 0 ] && [ "$DRY_RUN" = 0 ]; then
   [ "$answer" = "$MODEL" ] || die "aborted"
 fi
 
-# The OpenWrt side is a device that has just booted a fresh initramfs: it makes a
-# new host key every time, and 192.168.1.1 is an address other units may have
-# used. Give it its own known_hosts file so a stale key can never block it.
+# Stock Dropbear can regenerate host keys on boot, so use a per-run known_hosts
+# file instead of letting a stale personal entry look like a locked router.
+# OpenWrt initramfs also gets a fresh key at 192.168.1.1 on each boot.
 if [ "$DRY_RUN" = 1 ]; then
+  STOCK_KNOWN_HOSTS=/dev/null
   OWRT_KNOWN_HOSTS=/dev/null
   SSH_ERR=/dev/null
 else
+  STOCK_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-stock-kh.XXXXXX")" || die "cannot create a temp file"
   OWRT_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-kh.XXXXXX")" || die "cannot create a temp file"
   SSH_ERR="$(mktemp "${TMPDIR:-/tmp}/jidu-err.XXXXXX")" || die "cannot create a temp file"
-  trap 'rm -f "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
+  trap 'rm -f "$STOCK_KNOWN_HOSTS" "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
 fi
 
-SSH=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$STOCK")
-SCP=(scp -O -o StrictHostKeyChecking=accept-new)
+SSH=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" -o ConnectTimeout=10 "root@$STOCK")
+SCP=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS")
 SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
              -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
 SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
@@ -291,16 +293,23 @@ ensure_root_ssh() {
   fi
   warn "no root SSH yet: unlocking the unit now (it asks for the admin password)"
   [ -x "$UNLOCKER" ] || die "this unit is locked and $UNLOCKER is missing"
-  ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
+  if [ "$(id -u)" -eq 0 ]; then
+    ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
+  elif command -v sudo >/dev/null 2>&1; then
+    warn "unlock needs local port 80; requesting elevated permission for the unlock step only"
+    sudo -E env ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
+  else
+    die "unlock needs local port 80; run the unlock step with elevated privileges, then rerun this flasher"
+  fi
   "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null \
     || die "the unit unlocked, but root SSH still does not answer"
   ok "root SSH is live"
 }
 
-ensure_root_ssh
-
 ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"
+
+ensure_root_ssh
 
 say "uploading the factory image and the on-router script"
 run_must "uploading $(basename "$FACTORY_PATH")" \

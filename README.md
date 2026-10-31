@@ -322,9 +322,11 @@ On Windows use `.\firmware\fwflash.ps1 6j01`. It downloads the right images into
 `firmware/downloads/`, verifies their sha256, reuses them on later runs, unlocks
 the unit if root SSH is not already there (asking for the router admin password),
 writes the idle boot slot over SSH, and finishes with `sysupgrade`. Back the unit
-up first with `./flash.sh backup` — flashing is not reversible over the network.
-See [firmware/README.md](firmware/README.md) for the details and for what the
-mirror does and does not vouch for.
+up first — on macOS/Linux run `./flash.sh backup`; on Windows run
+`.\flash.ps1 backup --key $HOME\.ssh\idu_rsa` (see the Windows guide for key
+setup). Flashing is not reversible over the network. See
+[firmware/README.md](firmware/README.md) for details and what the mirror does
+and does not vouch for.
 
 The `6j01` models use the SSH shortcut first, then the official 25.12.6
 sysupgrade; the UART route installs the same official image without the
@@ -511,10 +513,13 @@ cookie path, so `requests` throws it away, and a sitting admin session never
 expires on a `6j11` unit, so waiting for it cannot work. Both fixes are in
 `idu.py`, and they came out of rooting a JIDU6611.
 
-The OpenWrt flashing procedure documented in [OPENWRT.md](OPENWRT.md)
-builds on work by
-**[the-diy-daddy/6j01_6j11](https://github.com/the-diy-daddy/6j01_6j11)**, and,
-for the 6j11 SSH install route and its firmware builds, by
+The 6j01/6j11 flashing method has a community-reported source chain: Cyborg
+shared it in the GeekyTwins server; it was relayed through WikiForce Admin on Discord and
+Sandip, then documented publicly by DIY Daddy. We have not independently
+verified every handoff, so this is attribution by reported provenance, not a
+claim of direct authorship. DIY Daddy's repository is credited as a public
+reference; it is not presented as the method's origin. The separate 6j11 SSH
+route and firmware builds are credited to
 **[themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH)**.
 
 If this project helped you, consider starring the repository.

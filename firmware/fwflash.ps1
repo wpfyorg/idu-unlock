@@ -181,8 +181,23 @@ if (-not $Yes -and -not $DryRun) {
 $onrouter = Join-Path (Join-Path $Here 'onrouter') "$Model.sh"
 if (-not (Test-Path $onrouter)) { Die "missing $onrouter" }
 
+$keyPath = $env:KEY
+if (-not $keyPath) {
+    $defaultKey = Join-Path $HOME '.ssh/idu_rsa'
+    if (Test-Path $defaultKey) { $keyPath = $defaultKey }
+}
+$stockKh = $null
 $stockOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
 $scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
+if (-not $DryRun) {
+    $stockKh = [System.IO.Path]::GetTempFileName()
+    $stockOpts += @('-o', "UserKnownHostsFile=$stockKh")
+    $scpOpts += @('-o', "UserKnownHostsFile=$stockKh")
+}
+if ($keyPath) {
+    $stockOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
+    $scpOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
+}
 
 # OpenWrt on 192.168.1.1 has just booted a fresh initramfs: it makes a new host
 # key every time, and that address may already be in known_hosts from another
@@ -200,6 +215,10 @@ if (-not $DryRun) {
 $owrtScpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new',
                  '-o', "UserKnownHostsFile=$owrtKh",
                  '-o', 'LogLevel=ERROR')
+if ($keyPath) {
+    $owrtOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
+    $owrtScpOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
+}
 
 # Native commands write to stderr as they go, and Windows PowerShell 5.1 turns a
 # native stderr line into a terminating error while $ErrorActionPreference is
@@ -256,9 +275,17 @@ try {
             if (-not (Test-Path $unlocker)) { Die "this unit is locked and $unlocker is missing" }
             # A separate process: flash.ps1 calls exit, which would end this
             # script too if it were dot-sourced or invoked with &.
+            if ($env:OS -eq 'Windows_NT' -and -not $keyPath) {
+                Die 'Windows unlock needs an RSA SSH key: set $env:KEY to its path, then rerun; no new flasher option is required'
+            }
             $hostExe = (Get-Process -Id $PID).Path
-            & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router"
-            if ($LASTEXITCODE -ne 0) { Die 'the unlock failed; nothing was flashed' }
+            $previousKey = $env:KEY
+            try {
+                if ($keyPath) { $env:KEY = $keyPath }
+                & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router"
+                if ($LASTEXITCODE -ne 0) { Die 'the unlock failed; nothing was flashed' }
+            }
+            finally { $env:KEY = $previousKey }
             if ((Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null') -ne 0) {
                 Die 'the unit unlocked, but root SSH still does not answer'
             }
@@ -333,7 +360,7 @@ try {
     }
 }
 finally {
-    foreach ($tmp in @($owrtKh, $sshErr)) {
+    foreach ($tmp in @($stockKh, $owrtKh, $sshErr)) {
         if ($tmp -and (Test-Path $tmp)) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
     }
 }

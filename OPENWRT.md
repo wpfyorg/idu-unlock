@@ -13,9 +13,10 @@
 >   routers die.
 > - **No warranty, no liability.** Provided as is — see the README.
 >
-> The SSH shortcut below is the community's method, worked out by
-> [the-diy-daddy](https://github.com/the-diy-daddy/6j01_6j11) and, for 6j11
-> route A, by
+> The SSH shortcut below is a community method. Its reported provenance is
+> Cyborg → GeekyTwins → WikiForce Admin on Discord → Sandip → public documentation by DIY
+> Daddy; the handoffs have not been independently verified. The distinct 6j11
+> SSH route and builds are credited to
 > [JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
 > See *Where this comes from* at the end. The 6j01 official route is from OpenWrt.
 > This project only writes it down more slowly; it does not automate the
@@ -251,8 +252,8 @@ two files are:
 | JIDU6101 | `openwrt-<version>-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-kernel.bin` | `openwrt-<version>-mediatek-filogic-jiorouter_ax6000-jidu6101-squashfs-sysupgrade.bin` |
 | JIDU6201 / 6401 / 6601 / 6701 | `openwrt-<version>-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-kernel.bin` | `openwrt-<version>-mediatek-filogic-jiorouter_ax6000-jidu6j01-squashfs-sysupgrade.bin` |
 
-The 6101 steps are also written down in the DIY repo's
-[6101_commands.md](https://github.com/the-diy-daddy/6j01_6j11/blob/main/6101_commands.md).
+The 6101 steps are also covered in community notes (`6101_commands.md`); see
+the provenance note at the end of this page.
 
 Rename them so the commands below stay readable:
 
@@ -453,7 +454,7 @@ Your backup is now the only copy of that data.
 
 #### B2. Connect UART
 
-Power off. Open the case, find the UART header (photos in upstream [`uart_pins`](https://github.com/the-diy-daddy/6j01_6j11/tree/main/uart_pins) — match your model). Wire **adapter TX → router RX, adapter RX → router TX, GND → GND**. Jumper on **3.3 V**, never 5 V.
+Power off. Open the case, find the UART header (use a verified pinout for your exact model). Wire **adapter TX → router RX, adapter RX → router TX, GND → GND**. Jumper on **3.3 V**, never 5 V.
 
 Open a terminal on the serial port at **115200 baud, 8N1**, then power on. Press a key repeatedly to interrupt boot and reach the u-boot prompt. Log in with your unit's credentials from `<backup-folder>/uboot_credentials.env`.
 
@@ -587,16 +588,13 @@ Official 6j01 support and the UART and TFTP install come from OpenWrt:
 JIDU6101 and [552e617b](https://github.com/openwrt/openwrt/commit/552e617bd0)
 for the JIDU6J01. The SPI-NAND fix is
 [PR 25122](https://github.com/openwrt/openwrt/pull/25122). The 6j01 SSH
-shortcut (route A), its community stage 1, and the 6j11 UART recovery steps
-come from
-[the-diy-daddy/6j01_6j11](https://github.com/the-diy-daddy/6j01_6j11),
-including its
-[6101_commands.md](https://github.com/the-diy-daddy/6j01_6j11/blob/main/6101_commands.md).
-The **6j11 SSH route (A, primary)**, its idle-slot detection and the community builds
-come from
-[themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
-Credit belongs with them. If stuck, those repositories are the better place
-to look than this page.
+shortcut and community stage 1, plus the 6j11 UART recovery notes, are part of
+a method whose reported source chain is **Cyborg → GeekyTwins server →
+WikiForce Admin on Discord → Sandip → DIY Daddy's public documentation**. This provenance
+comes from community accounts and has not been independently verified end to
+end; DIY Daddy is credited for publishing a useful reference, not claimed as the
+originator. The 6j11 SSH route (A), idle-slot detection and community builds are
+from [themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
 
 This page is this project's own wording, written to be followed slowly. Those
 repositories ship no licence, so nothing from them is copied here, and neither

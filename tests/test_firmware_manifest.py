@@ -120,6 +120,26 @@ class FlashScriptTest(unittest.TestCase):
         self.assertIn("would check root SSH", sh)
         self.assertIn("would check root SSH", ps)
 
+    def test_local_flash_script_is_checked_before_unlock(self):
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        self.assertLess(sh.index('[ -f "$ONROUTER" ]'), sh.index("ensure_root_ssh\n", sh.index('ONROUTER="$HERE')))
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        self.assertLess(ps.index('if (-not (Test-Path $onrouter))'), ps.index('if ((Test-Ssh $stockOpts'))
+
+    def test_flashers_isolate_stock_host_keys_and_use_configured_windows_key(self):
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        self.assertIn('UserKnownHostsFile="$STOCK_KNOWN_HOSTS"', sh)
+        self.assertIn('UserKnownHostsFile=$stockKh', ps)
+        self.assertIn("$env:KEY", ps)
+        self.assertIn("'IdentitiesOnly=yes'", ps)
+        self.assertIn('sudo -E env ROUTER=', sh)
+
+    def test_markdown_does_not_link_third_party_uart_photos(self):
+        for path in (ROOT / "OPENWRT.md", *(ROOT / "docs" / "models").glob("*.md")):
+            with self.subTest(path=path.name):
+                self.assertNotIn("uart_pins", path.read_text())
+
     def test_powershell_flasher_is_ascii_so_windows_powershell_5_parses_it(self):
         raw = (ROOT / "firmware" / "fwflash.ps1").read_bytes()
         offenders = sorted({b for b in raw if b > 0x7F})
