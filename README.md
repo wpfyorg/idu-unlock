@@ -310,23 +310,27 @@ Installation is documented separately:
 [guide for each model](docs/models/README.md). Read it completely before
 flashing anything.
 
-The whole install is one command — it unlocks the unit if it needs it, then
-flashes:
+For 6j01 and 6j11, one command downloads and verifies the images, unlocks the
+unit if root SSH is not already available, then flashes:
 
 ```bash
 ./firmware/fwflash.sh 6j01     # JIDU6201 / 6401 / 6601 / 6701
 ./firmware/fwflash.sh 6j11     # JIDU6111 / 6411 / 6611 / 6811 / 6911
 ```
 
-On Windows use `.\firmware\fwflash.ps1 6j01`. It downloads the right images into
-`firmware/downloads/`, verifies their sha256, reuses them on later runs, unlocks
-the unit if root SSH is not already there (asking for the router admin password),
-writes the idle boot slot over SSH, and finishes with `sysupgrade`. Back the unit
-up first — on macOS/Linux run `./flash.sh backup`; on Windows run
+On Windows use `.\firmware\fwflash.ps1 6j01`. Images are cached in
+`firmware/downloads/<model>/`, hash-checked on every run, and reused once valid.
+If the unit is locked, macOS/Linux requests `sudo` for the unlock step only
+(local port 80 is privileged); Windows needs an RSA key in `$env:KEY` or at
+`~/.ssh/idu_rsa`. That same Windows key is used by unlock, SSH and SCP. The
+flasher then writes the idle boot slot and finishes with `sysupgrade`.
+
+Back up first — on macOS/Linux run `./flash.sh backup`; on Windows run
 `.\flash.ps1 backup --key $HOME\.ssh\idu_rsa` (see the Windows guide for key
-setup). Flashing is not reversible over the network. See
-[firmware/README.md](firmware/README.md) for details and what the mirror does
-and does not vouch for.
+setup). Flashing is not reversible over the network. The 6101 has no SSH
+flasher: use its UART + TFTP route; the flasher can still download and verify
+its images with `--download-only`. See [firmware/README.md](firmware/README.md)
+for cache, flag, and image-provenance details.
 
 The `6j01` models use the SSH shortcut first, then the official 25.12.6
 sysupgrade; the UART route installs the same official image without the
