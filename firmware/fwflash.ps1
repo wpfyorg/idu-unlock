@@ -187,9 +187,11 @@ $scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
 # key every time, and that address may already be in known_hosts from another
 # unit. Give it a throwaway known_hosts file so a stale key cannot block it.
 $owrtKh = $null
+$sshErr = $null
 $owrtOpts = @()
 if (-not $DryRun) {
     $owrtKh = [System.IO.Path]::GetTempFileName()
+    $sshErr = [System.IO.Path]::GetTempFileName()
     $owrtOpts = @('-o', 'StrictHostKeyChecking=accept-new',
                   '-o', "UserKnownHostsFile=$owrtKh",
                   '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=5')
@@ -198,21 +200,45 @@ $owrtScpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new',
                  '-o', "UserKnownHostsFile=$owrtKh",
                  '-o', 'LogLevel=ERROR')
 
-function Invoke-Remote ($Options, $Target, $Command) {
+# Native commands write to stderr as they go, and Windows PowerShell 5.1 turns a
+# native stderr line into a terminating error while $ErrorActionPreference is
+# Stop. Every ssh and scp call goes through these three helpers: they relax the
+# preference for the duration, send output to the console rather than the
+# pipeline, and return nothing but the exit code - so a caller comparing $rc
+# always compares a number, not an array of output lines plus a number.
+function Invoke-Ssh ($Options, $Target, $Command) {
     if ($DryRun) {
         $shown = if ($Options) { ($Options -join ' ') + ' ' } else { '' }
         Write-Host "    would run: ssh $shown$Target $Command"
         return 0
     }
-    & ssh @Options $Target $Command
-    return $LASTEXITCODE
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & ssh @Options $Target $Command | Out-Host
+        return $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previous }
 }
 
-function Invoke-Must ($What, [scriptblock]$Action) {
-    if ($DryRun) { return 0 }
-    $rc = & $Action
-    if ($rc -ne 0) { Bad "$What failed (exit $rc)"; return $rc }
-    return 0
+function Test-Ssh ($Options, $Target, $ErrorFile, $Command = 'true') {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & ssh @Options $Target $Command 2>$ErrorFile | Out-Null
+        return $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previous }
+}
+
+function Invoke-Scp ($Options, $Source, $Destination) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & scp @Options $Source $Destination | Out-Host
+        return $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previous }
 }
 
 try {
@@ -221,8 +247,8 @@ try {
     }
     else {
         Say "checking root SSH on $Router"
-        & ssh @stockOpts "root@$Router" 'cat /proc/mtd >/dev/null' 2>$null
-        if ($LASTEXITCODE -ne 0) {
+        $rc = Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null>'
+        if ($rc -ne 0) {
             Bad "no root SSH on $Router"
             Die 'unlock first: .\flash.ps1 unlock  (and run .\flash.ps1 backup)'
         }
@@ -236,14 +262,14 @@ try {
         Write-Host "    would run: scp $onrouter root@${Router}:/tmp/jidu-flash.sh"
     }
     else {
-        & scp @scpOpts $Factory "root@${Router}:/tmp/jidu-factory.ubi"
-        if ($LASTEXITCODE -ne 0) { Die 'the image never reached the router, nothing was written' }
-        & scp @scpOpts $onrouter "root@${Router}:/tmp/jidu-flash.sh"
-        if ($LASTEXITCODE -ne 0) { Die 'the script never reached the router, nothing was written' }
+        $rc = Invoke-Scp $scpOpts $Factory "root@${Router}:/tmp/jidu-factory.ubi"
+        if ($rc -ne 0) { Die 'the image never reached the router, nothing was written' }
+        $rc = Invoke-Scp $scpOpts $onrouter "root@${Router}:/tmp/jidu-flash.sh"
+        if ($rc -ne 0) { Die 'the script never reached the router, nothing was written' }
     }
 
     Say 'writing the idle UBI slot (the unit reboots itself)'
-    $rc = Invoke-Remote $stockOpts "root@$Router" 'sh /tmp/jidu-flash.sh'
+    $rc = Invoke-Ssh $stockOpts "root@$Router" 'sh /tmp/jidu-flash.sh'
     # 255 means the unit dropped the connection as it rebooted, which is expected.
     if (-not $DryRun -and $rc -ne 0 -and $rc -ne 255) {
         Die "the slot was not written (exit $rc); the unit is still on stock firmware"
@@ -257,9 +283,10 @@ try {
         $sshed = $false
         $last = ''
         for ($i = 0; $i -lt 40; $i++) {
-            $out = & ssh @owrtOpts "root@$OpenWrt" 'true' 2>&1
-            if ($LASTEXITCODE -eq 0) { $sshed = $true; break }
-            $last = ($out | Select-Object -Last 1)
+            # A fresh initramfs refuses connections until sshd starts, so a
+            # failed probe is the normal case here, not an error to act on.
+            if ((Test-Ssh $owrtOpts "root@$OpenWrt" $sshErr) -eq 0) { $sshed = $true; break }
+            $last = Get-Content $sshErr -ErrorAction SilentlyContinue | Select-Object -Last 1
             Start-Sleep -Seconds 5
         }
         if (-not $sshed) {
@@ -275,12 +302,12 @@ try {
         Write-Host "    would run: scp $Sysupgrade root@${OpenWrt}:/tmp/sysupgrade.bin"
     }
     else {
-        & scp @owrtScpOpts $Sysupgrade "root@${OpenWrt}:/tmp/sysupgrade.bin"
-        if ($LASTEXITCODE -ne 0) { Die 'the sysupgrade never reached the unit; it is still in initramfs' }
+        $rc = Invoke-Scp $owrtScpOpts $Sysupgrade "root@${OpenWrt}:/tmp/sysupgrade.bin"
+        if ($rc -ne 0) { Die 'the sysupgrade never reached the unit; it is still in initramfs' }
     }
 
     Say 'flashing it (sysupgrade -n, settings are not kept)'
-    $rc = Invoke-Remote $owrtOpts "root@$OpenWrt" 'sysupgrade -n /tmp/sysupgrade.bin'
+    $rc = Invoke-Ssh $owrtOpts "root@$OpenWrt" 'sysupgrade -n /tmp/sysupgrade.bin'
     if (-not $DryRun -and $rc -ne 0 -and $rc -ne 255) {
         Die "sysupgrade refused the image (exit $rc); the unit is still in initramfs"
     }
@@ -295,5 +322,7 @@ try {
     }
 }
 finally {
-    if ($owrtKh -and (Test-Path $owrtKh)) { Remove-Item $owrtKh -Force -ErrorAction SilentlyContinue }
+    foreach ($tmp in @($owrtKh, $sshErr)) {
+        if ($tmp -and (Test-Path $tmp)) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    }
 }

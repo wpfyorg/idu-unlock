@@ -91,6 +91,17 @@ class FlashScriptTest(unittest.TestCase):
         self.assertIn("run_until_reboot", body)
         self.assertIn("sysupgrade refused the image", body)
 
+    def test_powershell_native_calls_go_through_the_exit_code_helpers(self):
+        """`& ssh ...` returns output, so $rc would be an array, not a status."""
+        body = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        self.assertNotIn("Invoke-Remote", body)
+        for call in ("$rc = Invoke-Ssh", "$rc = Invoke-Scp", "$rc = Test-Ssh"):
+            self.assertIn(call, body)
+        # output must go to the console, not into the caller's variable
+        self.assertEqual(body.count("| Out-Host"), 2)
+        # 2>&1 turns native stderr into a terminating error on PowerShell 5.1
+        self.assertNotIn("2>&1", body)
+
     def test_powershell_flasher_is_ascii_so_windows_powershell_5_parses_it(self):
         raw = (ROOT / "firmware" / "fwflash.ps1").read_bytes()
         offenders = sorted({b for b in raw if b > 0x7F})
