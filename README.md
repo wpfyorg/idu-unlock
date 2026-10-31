@@ -11,6 +11,20 @@ serial cable, a soldered header, or a factory firmware image.
 
 It runs on macOS, Linux and Windows.
 
+> [!IMPORTANT]
+> **Please, for the love of humanity, stop turning this into a black market.**
+> I am tired. Let this be how somebody's dead e-waste gets a second life instead
+> of one more listing with a markup on a resale site.
+>
+> We are irresponsible people. Do not hold us accountable — we are broke and we
+> have no lawyers. What you do with this is yours.
+
+> [!NOTE]
+> **The bug, written down.** The
+> [Jio AirFiber whitepaper](https://github.com/wpfyorg/jio-airfiber-whitepaper)
+> explains the `changeUserPassword` command injection in stock firmware, which
+> builds are affected, which build fixes it, and why any of this is public.
+
 > [!WARNING]
 > Use this only on hardware you own or have explicit permission to modify.
 > Unlocking may void a warranty or breach your service terms, and replacing
