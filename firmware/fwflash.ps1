@@ -143,13 +143,13 @@ if ($DownloadOnly) {
 
 if (-not $Spec.flasher) {
     Warn "there is no SSH flasher for $Model`: the documented route is UART + TFTP"
-    Warn "images are cached in $Dest; see docs/models/JIDU$Model.md"
+    Warn "images are cached in $Dest; see docs/models/ for the install route"
     exit 0
 }
 
 Write-Host ''
 Say 'about to flash:'
-Write-Host "      unit      $Router (stock) -> $OpenWrt (OpenWrt)"
+Write-Host "      unit      ${Router} (stock) -> ${OpenWrt} (OpenWrt)"
 Write-Host "      model     $Model"
 Write-Host "      factory   $(Split-Path $Factory -Leaf)"
 Write-Host "      sysupgrade $(Split-Path $Sysupgrade -Leaf)"
@@ -172,21 +172,23 @@ function Invoke-Remote ($target, $command) {
     return $LASTEXITCODE
 }
 
-Say "checking root SSH on $Router"
-if (-not $DryRun) {
+if ($DryRun) {
+    Say "would check root SSH on $Router"
+} else {
+    Say "checking root SSH on $Router"
     & ssh @sshOpts "root@$Router" 'cat /proc/mtd >/dev/null' 2>$null
     if ($LASTEXITCODE -ne 0) {
         Bad "no root SSH on $Router"
         Die 'unlock first: .\flash.ps1 unlock  (and run .\flash.ps1 backup)'
     }
+    Ok 'root SSH is live'
 }
-Ok 'root SSH is live'
 
 Say 'uploading the factory image and the on-router script'
 if ($DryRun) {
-    Write-Host "    would run: scp $Factory $onrouter root@$Router:/tmp/"
+    Write-Host "    would run: scp $Factory $onrouter root@${Router}:/tmp/"
 } else {
-    & scp @scpOpts $Factory $onrouter "root@$Router`:/tmp/"
+    & scp @scpOpts $Factory $onrouter "root@${Router}:/tmp/"
     if ($LASTEXITCODE -ne 0) { Die 'upload failed' }
 }
 
@@ -214,9 +216,9 @@ Ok 'initramfs is up'
 
 Say 'uploading the permanent sysupgrade'
 if ($DryRun) {
-    Write-Host "    would run: scp $Sysupgrade root@$OpenWrt:/tmp/sysupgrade.bin"
+    Write-Host "    would run: scp $Sysupgrade root@${OpenWrt}:/tmp/sysupgrade.bin"
 } else {
-    & scp @scpOpts $Sysupgrade "root@$OpenWrt`:/tmp/sysupgrade.bin"
+    & scp @scpOpts $Sysupgrade "root@${OpenWrt}:/tmp/sysupgrade.bin"
     if ($LASTEXITCODE -ne 0) { Die 'upload failed' }
 }
 
@@ -225,4 +227,4 @@ Invoke-Remote "root@$OpenWrt" 'sysupgrade -n /tmp/sysupgrade.bin' | Out-Null
 
 Write-Host ''
 Ok "done. The unit reboots into OpenWrt at http://$OpenWrt — LuCI, root, no password."
-Write-Host "    If it does not come back, recovery is UART + TFTP: docs/models/JIDU$Model.md"
+Write-Host "    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md"

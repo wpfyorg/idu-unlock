@@ -194,7 +194,7 @@ fi
 # --- flash ------------------------------------------------------------------
 if [ "$(manifest_field flasher)" != "True" ]; then
   warn "there is no SSH flasher for $MODEL: the documented route for this board is UART + TFTP"
-  warn "images are cached in $DEST; see docs/models/JIDU$MODEL.md"
+  warn "images are cached in $DEST; see docs/models/ for the install route"
   exit 0
 fi
 
@@ -221,20 +221,22 @@ SCP=(scp -O -o StrictHostKeyChecking=accept-new "root@$STOCK")
 SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "root@$OPENWRT")
 SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new "root@$OPENWRT")
 
-say "checking root SSH on $STOCK"
-if [ "$DRY_RUN" = 0 ]; then
+if [ "$DRY_RUN" = 1 ]; then
+  say "would check root SSH on $STOCK"
+else
+  say "checking root SSH on $STOCK"
   "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null || {
     bad "no root SSH on $STOCK"
     die "unlock first: ./flash.sh unlock  (and run ./flash.sh backup)"
   }
+  ok "root SSH is live"
 fi
-ok "root SSH is live"
 
 ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"
 
 say "uploading the factory image and the on-router script"
-run '"${SCP[@]}" "$FACTORY_PATH" "$ONROUTER" root@"$STOCK":/tmp/'
+run '"${SCP[@]}" "$FACTORY_PATH" "$ONROUTER" "root@$STOCK:/tmp/"'
 
 say "writing the idle UBI slot (the unit reboots itself)"
 run '"${SSH[@]}" "sed -i \"s/\\r\$//\" /tmp/'"$(basename "$ONROUTER")"'; sh /tmp/'"$(basename "$ONROUTER")"'"'
@@ -253,14 +255,14 @@ if [ "$DRY_RUN" = 0 ]; then
   done
   [ "$sshed" = 1 ] || die "OpenWrt did not answer on $OPENWRT — check the unit, it may need UART recovery"
 fi
-ok "initramfs is up"
+if [ "$DRY_RUN" = 1 ]; then say "would flash the sysupgrade on $OPENWRT"; else ok "initramfs is up"; fi
 
 say "uploading the permanent sysupgrade"
-run '"${SCP_NEW[@]}" "$SYSUPGRADE_PATH" root@"$OPENWRT":/tmp/sysupgrade.bin'
+run '"${SCP_NEW[@]}" "$SYSUPGRADE_PATH" "root@$OPENWRT:/tmp/sysupgrade.bin"'
 
 say "flashing it (sysupgrade -n, settings are not kept)"
 run '"${SSH_NEW[@]}" "sysupgrade -n /tmp/sysupgrade.bin"'
 
 printf '\n'
 ok "done. The unit reboots into OpenWrt at http://$OPENWRT — LuCI, root, no password."
-printf '    If it does not come back, recovery is UART + TFTP: docs/models/JIDU%s.md\n' "$MODEL"
+printf '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md\n'
