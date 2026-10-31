@@ -7,47 +7,56 @@
 #
 # rootfs_data is never touched.
 #
-# Look for any factory.ubi in /tmp
-FACTORY=$(ls /tmp/*factory.ubi 2>/dev/null | head -n 1)
+# set -e matters here: a failed ubiformat must not be followed by fw_setenv and
+# a reboot, which would point the bootloader at a half-written slot.
 
-if [ -z "$FACTORY" ] || [ ! -f "$FACTORY" ]; then
-    echo "[-] Error: factory.ubi not found in /tmp!"
+set -e
+
+# fwflash.sh uploads the verified image under this exact name. Do not glob for
+# *factory.ubi: a leftover image for another model could sort first.
+FACTORY=/tmp/jidu-factory.ubi
+if [ ! -f "$FACTORY" ]; then
+  echo "[-] $FACTORY is missing; nothing uploaded, nothing written"
+  exit 1
+fi
+echo "[+] factory image: $FACTORY"
+
+# Detect the active slot. Anything other than the two known names means the
+# layout is not what this script expects, so stop rather than pick a slot.
+ACT=$(grep -oE 'ubi\.mtd=[^ ]+' /proc/cmdline | cut -d= -f2) || ACT=""
+case "$ACT" in
+  rootfs)   IDLE=rootfs_1 ;;
+  rootfs_1) IDLE=rootfs ;;
+  *)
+    echo "[-] unexpected ubi.mtd='$ACT' in /proc/cmdline - cannot tell active from idle"
+    cat /proc/cmdline
     exit 1
-fi
-echo "[+] Found factory image: $FACTORY"
+    ;;
+esac
+echo "[+] active slot: $ACT, idle slot: $IDLE"
 
-# Detect active and idle slots
-ACT=$(grep -oE 'ubi\.mtd=[^ ]+' /proc/cmdline | cut -d= -f2)
-echo "[+] Active slot is: $ACT"
-
-if [ "$ACT" = "rootfs" ]; then
-    IDLE="rootfs_1"
-else
-    IDLE="rootfs"
-fi
-echo "[+] Idle slot is: $IDLE"
-
-# Find MTD device and number
 DEV=$(grep "\"$IDLE\"" /proc/mtd | cut -d: -f1)
+if [ -z "$DEV" ]; then
+  echo "[-] no partition named $IDLE in /proc/mtd - refusing to write"
+  cat /proc/mtd
+  exit 1
+fi
 NUM=$(echo "$DEV" | tr -dc '0-9')
-echo "[+] Target MTD device: /dev/$DEV ($NUM)"
+echo "[+] target: /dev/$DEV ($NUM)"
 
-# Get offset and size in hex
-OFF=$(printf "0x%x" $(cat /sys/class/mtd/$DEV/offset))
-SIZ=$(printf "0x%x" $(cat /sys/class/mtd/$DEV/size))
-echo "[+] Offset: $OFF, Size: $SIZ"
+OFF=$(printf "0x%x" "$(cat /sys/class/mtd/$DEV/offset)")
+SIZ=$(printf "0x%x" "$(cat /sys/class/mtd/$DEV/size)")
+echo "[+] offset: $OFF, size: $SIZ"
 
-# Flash the factory image
-echo "[+] Formatting and flashing $FACTORY to /dev/$DEV..."
+echo "[+] formatting and flashing $FACTORY to /dev/$DEV"
 ubidetach -m "$NUM" 2>/dev/null || true
 ubiformat "/dev/$DEV" -y -f "$FACTORY"
 
-# Configure U-Boot
-echo "[+] Updating U-Boot environment..."
+echo "[+] updating the U-Boot environment"
 fw_setenv mtdids 'nand0=nand0'
 fw_setenv mtdparts "mtdparts=nand0:${SIZ}@${OFF}(${IDLE})"
 fw_setenv bootcmd "ubi detach; ubi part ${IDLE}; ubi read 0x46000000 kernel; bootm 0x46000000"
 
-echo "[+] SUCCESS! Rebooting in 3 seconds..."
+echo "[+] success, rebooting in 3 seconds"
 sleep 3
 reboot

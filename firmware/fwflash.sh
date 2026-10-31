@@ -14,6 +14,8 @@
 #   --router HOST   stock unit address (default 192.168.31.1)
 #   --cache DIR     where images are kept (default ./downloads, next to this script)
 #   --image PATH    use a local sysupgrade file instead of downloading one
+#   --image-sha256 HEX
+#                   the sha256 of --image; without it you must still confirm
 #   --smallbuffers  6j11 only: flash the small-buffers sysupgrade build
 #   --download-only cache the images and stop
 #   --dry-run       print what would run, touch nothing
@@ -40,6 +42,7 @@ STOCK="192.168.31.1"
 OPENWRT="192.168.1.1"
 CACHE="$HERE/downloads"
 IMAGE=""
+IMAGE_SHA=""
 MODEL=""
 SMALLBUFFERS=0
 DOWNLOAD_ONLY=0
@@ -52,16 +55,16 @@ ok()   { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; }
 die()  { bad "$*"; exit 1; }
-run()  { if [ "$DRY_RUN" = 1 ]; then printf '    would run: %s\n' "$*"; else eval "$@"; fi; }
 
-usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    6j01|6j11|6101) MODEL="$1"; shift ;;
+    6j01|6j11|6101)  MODEL="$1"; shift ;;
     --router)        STOCK="$2"; shift 2 ;;
     --cache)         CACHE="$2"; shift 2 ;;
     --image)         IMAGE="$2"; shift 2 ;;
+    --image-sha256)  IMAGE_SHA="$2"; shift 2 ;;
     --smallbuffers)  SMALLBUFFERS=1; shift ;;
     --download-only) DOWNLOAD_ONLY=1; shift ;;
     --dry-run)       DRY_RUN=1; shift ;;
@@ -74,6 +77,16 @@ done
 
 [ -n "$MODEL" ] || { usage; exit 2; }
 command -v python3 >/dev/null || die "python3 is required (it reads the manifest)"
+
+# One hash tool, picked once. Fail loudly instead of comparing empty strings.
+if command -v sha256sum >/dev/null; then
+  SHA_CMD=(sha256sum)
+elif command -v shasum >/dev/null; then
+  SHA_CMD=(shasum -a 256)
+else
+  die "sha256sum or shasum is required to verify the images"
+fi
+sha_of() { "${SHA_CMD[@]}" "$1" 2>/dev/null | awk '{print $1}'; }
 
 # --- manifest ---------------------------------------------------------------
 # One line per image: role|name|sha256|size|url
@@ -109,11 +122,11 @@ DEST="$CACHE/$MODEL"
 say "$TITLE"
 say "images: $DEST"
 
-mkdir -p "$DEST" || die "cannot create $DEST"
+if [ "$DRY_RUN" = 0 ]; then
+  mkdir -p "$DEST" || die "cannot create $DEST"
+fi
 
 # --- cache ------------------------------------------------------------------
-sha_of() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
-
 have_image() {  # role -> prints path on stdout, 0 if already cached and verified
   local line role name sha size url path
   line="$(image_line "$1")"; [ -n "$line" ] || return 1
@@ -121,8 +134,12 @@ have_image() {  # role -> prints path on stdout, 0 if already cached and verifie
   path="$DEST/$name"
   [ -f "$path" ] || return 1
   if [ "$(sha_of "$path")" = "$sha" ]; then echo "$path"; return 0; fi
-  warn "cached $name does not match the manifest, re-downloading" >&2
-  rm -f "$path"
+  if [ "$DRY_RUN" = 1 ]; then
+    warn "cached $name does not match the manifest (a real run would replace it)" >&2
+  else
+    warn "cached $name does not match the manifest, re-downloading" >&2
+    rm -f "$path"
+  fi
   return 1
 }
 
@@ -164,7 +181,15 @@ SYSUPGRADE_PATH=""
 if [ -n "$IMAGE" ]; then
   [ -f "$IMAGE" ] || die "no such file: $IMAGE"
   SYSUPGRADE_PATH="$(cd "$(dirname "$IMAGE")" && pwd)/$(basename "$IMAGE")"
-  warn "using $SYSUPGRADE_PATH — not checked against the manifest"
+  if [ -n "$IMAGE_SHA" ]; then
+    [ "$(sha_of "$SYSUPGRADE_PATH")" = "$IMAGE_SHA" ] \
+      || die "$IMAGE: sha256 mismatch, refusing to use it"
+    ok "$(basename "$IMAGE") (matches the hash you supplied)"
+  else
+    warn "$(basename "$IMAGE") is not checked against the manifest"
+    printf '    its sha256 is %s\n' "$(sha_of "$SYSUPGRADE_PATH")"
+    ASSUME_YES=0   # a hand-picked image always gets the typed confirmation
+  fi
 fi
 
 if [ "$DOWNLOAD_ONLY" = 0 ]; then
@@ -198,10 +223,6 @@ if [ "$(manifest_field flasher)" != "True" ]; then
   exit 0
 fi
 
-if [ "$MODEL" = "6101" ]; then
-  die "6101 has no SSH flasher yet"
-fi
-
 printf '\n'
 say "about to flash:"
 printf '      unit      %s (stock) -> %s (OpenWrt)\n' "$STOCK" "$OPENWRT"
@@ -216,10 +237,41 @@ if [ "$ASSUME_YES" = 0 ] && [ "$DRY_RUN" = 0 ]; then
   [ "$answer" = "$MODEL" ] || die "aborted"
 fi
 
+# The OpenWrt side is a device that has just booted a fresh initramfs: it makes a
+# new host key every time, and 192.168.1.1 is an address other units may have
+# used. Give it its own known_hosts file so a stale key can never block it.
+if [ "$DRY_RUN" = 1 ]; then
+  OWRT_KNOWN_HOSTS=/dev/null
+  SSH_ERR=/dev/null
+else
+  OWRT_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-kh.XXXXXX")" || die "cannot create a temp file"
+  SSH_ERR="$(mktemp "${TMPDIR:-/tmp}/jidu-err.XXXXXX")" || die "cannot create a temp file"
+  trap 'rm -f "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
+fi
+
 SSH=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$STOCK")
-SCP=(scp -O -o StrictHostKeyChecking=accept-new "root@$STOCK")
-SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "root@$OPENWRT")
-SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new "root@$OPENWRT")
+SCP=(scp -O -o StrictHostKeyChecking=accept-new)
+SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
+             -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
+SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
+             -o LogLevel=ERROR)
+
+run_must() {  # must exit 0
+  local what="$1"; shift
+  if [ "$DRY_RUN" = 1 ]; then printf '    would run: %s\n' "$*"; return 0; fi
+  if ! "$@"; then bad "$what failed"; return 1; fi
+}
+
+run_until_reboot() {  # 0 or 255: the unit drops the connection as it reboots
+  local what="$1"; shift
+  if [ "$DRY_RUN" = 1 ]; then printf '    would run: %s\n' "$*"; return 0; fi
+  local rc=0
+  "$@" || rc=$?
+  case "$rc" in
+    0|255) return 0 ;;
+    *) bad "$what failed (exit $rc)"; return 1 ;;
+  esac
+}
 
 if [ "$DRY_RUN" = 1 ]; then
   say "would check root SSH on $STOCK"
@@ -236,33 +288,47 @@ ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"
 
 say "uploading the factory image and the on-router script"
-run '"${SCP[@]}" "$FACTORY_PATH" "$ONROUTER" "root@$STOCK:/tmp/"'
+run_must "uploading $(basename "$FACTORY_PATH")" \
+  "${SCP[@]}" "$FACTORY_PATH" "root@$STOCK:/tmp/jidu-factory.ubi" \
+  || die "the image never reached the router, nothing was written"
+run_must "uploading the on-router script" \
+  "${SCP[@]}" "$ONROUTER" "root@$STOCK:/tmp/jidu-flash.sh" \
+  || die "the script never reached the router, nothing was written"
 
 say "writing the idle UBI slot (the unit reboots itself)"
-run '"${SSH[@]}" "sed -i \"s/\\r\$//\" /tmp/'"$(basename "$ONROUTER")"'; sh /tmp/'"$(basename "$ONROUTER")"'"'
+run_until_reboot "the on-router script" "${SSH[@]}" 'sh /tmp/jidu-flash.sh' \
+  || die "the slot was not written; the unit is still on stock firmware"
 
-say "waiting for OpenWrt on $OPENWRT (up to 5 minutes)"
-if [ "$DRY_RUN" = 0 ]; then
-  for _ in $(seq 1 60); do
-    if ping -c 1 -W 1000 "$OPENWRT" >/dev/null 2>&1; then break; fi
-    sleep 5
-  done
-  sleep 5
+if [ "$DRY_RUN" = 1 ]; then
+  say "would wait for OpenWrt on $OPENWRT"
+else
+  say "waiting for OpenWrt on $OPENWRT (up to 3 minutes)"
   sshed=0
-  for _ in $(seq 1 12); do
-    if "${SSH_NEW[@]}" 'true' 2>/dev/null; then sshed=1; break; fi
+  for _ in $(seq 1 40); do
+    if "${SSH_NEW[@]}" 'true' 2>"$SSH_ERR"; then sshed=1; break; fi
     sleep 5
   done
-  [ "$sshed" = 1 ] || die "OpenWrt did not answer on $OPENWRT — check the unit, it may need UART recovery"
+  if [ "$sshed" != 1 ]; then
+    bad "no SSH on $OPENWRT after 200s"
+    [ -s "$SSH_ERR" ] && bad "last error: $(tail -n 1 "$SSH_ERR")"
+    die "the unit may need UART recovery: docs/models/ and firmware/README.md"
+  fi
+  ok "initramfs is up"
 fi
-if [ "$DRY_RUN" = 1 ]; then say "would flash the sysupgrade on $OPENWRT"; else ok "initramfs is up"; fi
 
 say "uploading the permanent sysupgrade"
-run '"${SCP_NEW[@]}" "$SYSUPGRADE_PATH" "root@$OPENWRT:/tmp/sysupgrade.bin"'
+run_must "uploading the sysupgrade" \
+  "${SCP_NEW[@]}" "$SYSUPGRADE_PATH" "root@$OPENWRT:/tmp/sysupgrade.bin" \
+  || die "the sysupgrade never reached the unit; it is still in initramfs"
 
 say "flashing it (sysupgrade -n, settings are not kept)"
-run '"${SSH_NEW[@]}" "sysupgrade -n /tmp/sysupgrade.bin"'
+run_until_reboot "sysupgrade" "${SSH_NEW[@]}" 'sysupgrade -n /tmp/sysupgrade.bin' \
+  || die "sysupgrade refused the image; the unit is still in initramfs"
 
 printf '\n'
-ok "done. The unit reboots into OpenWrt at http://$OPENWRT — LuCI, root, no password."
-printf '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md\n'
+if [ "$DRY_RUN" = 1 ]; then
+  warn "dry run: nothing was downloaded, written or flashed"
+else
+  ok "done. The unit reboots into OpenWrt at http://$OPENWRT — LuCI, root, no password."
+  printf '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md\n'
+fi

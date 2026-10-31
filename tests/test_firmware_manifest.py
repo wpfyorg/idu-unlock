@@ -68,12 +68,33 @@ class FlashScriptTest(unittest.TestCase):
         for name in ("6j01.sh", "6j11.sh"):
             body = (ROOT / "firmware" / "onrouter" / name).read_text()
             with self.subTest(script=name):
-                self.assertIn("factory.ubi", body)
-                self.assertIn("ubiformat", body)
+                # the partition is looked up, never hard-coded...
                 self.assertIn("/proc/mtd", body)
-                # the partition must be looked up, never hard-coded
                 self.assertNotIn("ubiformat /dev/mtd", body)
-                self.assertIn('"$DEV"', body)
+                # ...and an empty lookup must stop the script before ubiformat
+                self.assertIn('[ -z "$DEV" ]', body)
+                # a failed ubiformat must not be followed by fw_setenv + reboot
+                self.assertIn("set -e", body)
+                self.assertLess(body.index("set -e"), body.index("\nubiformat "))
+
+    def test_onrouter_scripts_use_the_exact_uploaded_image(self):
+        """A glob over /tmp can pick another model's factory image."""
+        for name in ("6j01.sh", "6j11.sh"):
+            body = (ROOT / "firmware" / "onrouter" / name).read_text()
+            with self.subTest(script=name):
+                self.assertIn("/tmp/jidu-factory.ubi", body)
+                self.assertNotIn("ls /tmp/*factory.ubi", body)
+
+    def test_bash_flasher_checks_the_result_of_every_remote_step(self):
+        body = (ROOT / "firmware" / "fwflash.sh").read_text()
+        self.assertIn("run_must", body)
+        self.assertIn("run_until_reboot", body)
+        self.assertIn("sysupgrade refused the image", body)
+
+    def test_powershell_flasher_is_ascii_so_windows_powershell_5_parses_it(self):
+        raw = (ROOT / "firmware" / "fwflash.ps1").read_bytes()
+        offenders = sorted({b for b in raw if b > 0x7F})
+        self.assertEqual(offenders, [], "non-ASCII bytes break a BOM-less .ps1 on Windows PowerShell 5.1")
 
 
 if __name__ == "__main__":
