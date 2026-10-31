@@ -14,14 +14,14 @@ The shared procedure, with the reasoning behind each command, is
 | --- | --- | --- | --- | --- | --- |
 | [JIDU6101](JIDU6101.md) | MediaTek `6j01` | Yes (`jidu6101`) | SSH then official, UART fallback | None published | Official image; SSH primary |
 | [JIDU6201](JIDU6201.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | None published | Official image; SSH primary |
-| [JIDU6401](JIDU6401.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6401.jpg) | Official image; SSH primary |
+| [JIDU6401](JIDU6401.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | not hosted here | Official image; SSH primary |
 | [JIDU6601](JIDU6601.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | None published | Official image; SSH primary |
 | [JIDU6701](JIDU6701.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | None published | Official image; SSH primary |
-| [JIDU6111](JIDU6111.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6111.jpg) | SSH primary; community |
-| [JIDU6411](JIDU6411.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6411.jpg) | SSH primary; community |
-| [JIDU6611](JIDU6611.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6611.jpg) | SSH primary; community |
-| [JIDU6811](JIDU6811.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6811.jpg) | SSH primary; community |
-| [JIDU6911](JIDU6911.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6911.jpg) | SSH primary; community |
+| [JIDU6111](JIDU6111.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
+| [JIDU6411](JIDU6411.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
+| [JIDU6611](JIDU6611.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
+| [JIDU6811](JIDU6811.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
+| [JIDU6911](JIDU6911.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
 
 The 6101's SSH path writes the shared `jidu6j01` stage 1, then the official
 `jidu6101` image with `-F`; its UART path installs the 6101 image without

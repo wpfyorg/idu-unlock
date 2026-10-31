@@ -1,0 +1,108 @@
+{
+  "release": "fw-2026.10",
+  "base_url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10",
+  "models": {
+    "6j01": {
+      "title": "JIDU6J01 (JioRouter AX6000, MediaTek MT7986a)",
+      "aliases": [
+        "JIDU6J01",
+        "JIDU6201",
+        "JIDU6401",
+        "JIDU6601",
+        "JIDU6701"
+      ],
+      "target": "mediatek/filogic",
+      "upstream": "https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/",
+      "flasher": true,
+      "images": {
+        "factory": {
+          "name": "openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi",
+          "sha256": "5e54b3503f50ec0acca079d1f6926669d02990095e2d6850a9842b14556f2482",
+          "size": 17170432,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi"
+        },
+        "initramfs": {
+          "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-kernel.bin",
+          "sha256": "16227e90fdde6669a8b71de5bec8020f980065bbee843101ace2004e1892de76",
+          "size": 9315004,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-kernel.bin"
+        },
+        "sysupgrade": {
+          "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-squashfs-sysupgrade.bin",
+          "sha256": "d00a6abc8795e1ffb877b67e945d91c70dbd1d739cb6a1669a844febef72d703",
+          "size": 10055970,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-squashfs-sysupgrade.bin"
+        }
+      }
+    },
+    "6101": {
+      "title": "JIDU6101 (JioRouter AX6000, MediaTek MT7986a)",
+      "aliases": [
+        "JIDU6101"
+      ],
+      "target": "mediatek/filogic",
+      "upstream": "https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/",
+      "flasher": false,
+      "images": {
+        "factory": {
+          "name": "openwrt-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-factory.ubi",
+          "sha256": "b96d38977cc3bffa573f27b4fffb13190a66bec4883103ec342da83428c5d84e",
+          "size": 17170432,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-factory.ubi"
+        },
+        "initramfs": {
+          "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-kernel.bin",
+          "sha256": "4f1da6fe8915ed5a9bb8002c7c4e04c273ac2df82a9ec711d0a8359da52dc690",
+          "size": 9315004,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-kernel.bin"
+        },
+        "sysupgrade": {
+          "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-squashfs-sysupgrade.bin",
+          "sha256": "22e5a6be0909b5a0b54830854b5b71271e7ad350c7d2e94c59d658736cec6ee6",
+          "size": 10055970,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-squashfs-sysupgrade.bin"
+        }
+      }
+    },
+    "6j11": {
+      "title": "JIDU6J11 (JioRouter AX6000, Qualcomm IPQ9574)",
+      "aliases": [
+        "JIDU6J11",
+        "JIDU6111",
+        "JIDU6411",
+        "JIDU6611",
+        "JIDU6811",
+        "JIDU6911"
+      ],
+      "target": "qualcommbe/ipq95xx",
+      "upstream": "https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH/releases/tag/v1.0.0",
+      "flasher": true,
+      "images": {
+        "factory": {
+          "name": "openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-initramfs-factory.ubi",
+          "sha256": "f4afd832b096d6abdc79a01b9a03607f5c79868b5711ff5b455f4fbfed072aa5",
+          "size": 20709376,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-initramfs-factory.ubi"
+        },
+        "sysupgrade": {
+          "name": "openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-squashfs-sysupgrade.bin",
+          "sha256": "fe4c799cf7f772c7686a28ab93aec380665458eab814b4be450fe4329da42069",
+          "size": 17193258,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-squashfs-sysupgrade.bin"
+        },
+        "smallbuffers": {
+          "name": "openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-smallbuffers-squashfs-sysupgrade.bin",
+          "sha256": "0cfbac86c1e9622bb8aba31b8e8ee01f29ea05ec22df90f44ed6bc8213314bc7",
+          "size": 17193258,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-smallbuffers-squashfs-sysupgrade.bin"
+        },
+        "initramfs": {
+          "name": "openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-initramfs-uImage.itb",
+          "sha256": "7f5c2a9a6f87552d48964197cfc1a8a3a0673618a47fc8e4f51e59cba0bbe729",
+          "size": 17757936,
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-jidu6j11-initramfs-uImage.itb"
+        }
+      }
+    }
+  }
+}

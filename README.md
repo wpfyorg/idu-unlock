@@ -310,13 +310,32 @@ Installation is documented separately:
 [guide for each model](docs/models/README.md). Read it completely before
 flashing anything.
 
+The whole install is one command — it unlocks the unit if it needs it, then
+flashes:
+
+```bash
+./firmware/fwflash.sh 6j01     # JIDU6201 / 6401 / 6601 / 6701
+./firmware/fwflash.sh 6j11     # JIDU6111 / 6411 / 6611 / 6811 / 6911
+```
+
+On Windows use `.\firmware\fwflash.ps1 6j01`. It downloads the right images into
+`firmware/downloads/`, verifies their sha256, reuses them on later runs, unlocks
+the unit if root SSH is not already there (asking for the router admin password),
+writes the idle boot slot over SSH, and finishes with `sysupgrade`. Back the unit
+up first — on macOS/Linux run `./flash.sh backup`; on Windows run
+`.\flash.ps1 backup --key $HOME\.ssh\idu_rsa` (see the Windows guide for key
+setup). Flashing is not reversible over the network. See
+[firmware/README.md](firmware/README.md) for details and what the mirror does
+and does not vouch for.
+
 The `6j01` models use the SSH shortcut first, then the official 25.12.6
 sysupgrade; the UART route installs the same official image without the
 community stage 1. The 6101 forces its `jidu6101` image with `-F`; the other
 four match `jidu6j01` and do not need it. All five `6j11` models use the Mayank
 SSH method and the
 [JIO-AX6000-6J11 community builds](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH);
-UART is recovery only.
+UART is recovery only. There is no SSH flasher for the 6101 — its documented
+route is UART + TFTP — but `fwflash` will still download and verify its images.
 
 ## Questions people ask
 
@@ -385,6 +404,12 @@ docs/
 flash.sh             macOS / Linux launcher
 flash.ps1            Windows PowerShell launcher
 idu.py               core engine used by both launchers
+firmware/
+  fwflash.sh         download + flash OpenWrt (macOS / Linux)
+  fwflash.ps1        download + flash OpenWrt (Windows)
+  manifest.json      which image for which model, with sha256 and URL
+  onrouter/          scripts uploaded to the stock unit and run there
+  downloads/         image cache, git-ignored
 requirements.txt     Python dependencies
 tests/               tests
 ```
@@ -488,10 +513,13 @@ cookie path, so `requests` throws it away, and a sitting admin session never
 expires on a `6j11` unit, so waiting for it cannot work. Both fixes are in
 `idu.py`, and they came out of rooting a JIDU6611.
 
-The OpenWrt flashing procedure documented in [OPENWRT.md](OPENWRT.md)
-builds on work by
-**[the-diy-daddy/6j01_6j11](https://github.com/the-diy-daddy/6j01_6j11)**, and,
-for the 6j11 SSH install route and its firmware builds, by
+The 6j01/6j11 flashing method has a community-reported source chain: Cyborg
+shared it in the GeekyTwins server; it was relayed through WikiForce Admin on Discord and
+Sandip, then documented publicly by DIY Daddy. We have not independently
+verified every handoff, so this is attribution by reported provenance, not a
+claim of direct authorship. DIY Daddy's repository is credited as a public
+reference; it is not presented as the method's origin. The separate 6j11 SSH
+route and firmware builds are credited to
 **[themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH)**.
 
 If this project helped you, consider starring the repository.
