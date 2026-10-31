@@ -1,0 +1,228 @@
+#!/usr/bin/env pwsh
+<#
+fwflash.ps1 — fetch and flash an OpenWrt image for a JIDU router, on Windows.
+
+  .\fwflash.ps1 6j01                 flash a JIDU6J01 over stock root SSH
+  .\fwflash.ps1 6j11                 flash a JIDU6J11 over stock root SSH
+  .\fwflash.ps1 6j11 -Smallbuffers   ...using the reduced-buffer sysupgrade build
+  .\fwflash.ps1 6j01 -DownloadOnly   cache the images, flash nothing
+  .\fwflash.ps1 6101                 downloads only: no SSH flasher for 6101
+
+Options:
+  -Router HOST    stock unit address (default 192.168.31.1)
+  -Cache DIR      where images are kept (default .\downloads, next to this script)
+  -Image PATH     use a local sysupgrade file instead of downloading one
+  -Smallbuffers   6j11 only: flash the small-buffers sysupgrade build
+  -DownloadOnly   cache the images and stop
+  -DryRun         print what would run, touch nothing
+  -Yes            skip the confirmation prompt
+
+Images land in .\downloads\<model>\ next to this script and stay there. On the
+next run anything already present is reused, so nothing is downloaded twice.
+Every file is checked against the sha256 in manifest.json before use, including
+files already on disk, so a corrupt or half-written download is never flashed.
+
+The router must already have root SSH. Get that with .\flash.ps1 unlock (or the
+password trick documented upstream). Back the unit up before flashing: this
+writes over the boot chain and is not reversible over the network.
+
+Only run against equipment you own or are explicitly authorised to test.
+Provided as is, without warranty, without liability — see the README.
+#>
+
+param(
+    [Parameter(Position = 0)]
+    [ValidateSet('6j01', '6j11', '6101')]
+    [string]$Model,
+
+    [string]$Router = '192.168.31.1',
+    [string]$Cache,
+    [string]$Image,
+    [switch]$Smallbuffers,
+    [switch]$DownloadOnly,
+    [switch]$DryRun,
+    [switch]$Yes,
+    [switch]$Help
+)
+
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+
+$Here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$Manifest = Join-Path $Here 'manifest.json'
+$OpenWrt = '192.168.1.1'
+
+function Say  ($m) { Write-Host "[*] $m" -ForegroundColor Cyan }
+function Ok   ($m) { Write-Host "[+] $m" -ForegroundColor Green }
+function Warn ($m) { Write-Host "[!] $m" -ForegroundColor Yellow }
+function Bad  ($m) { Write-Host "[-] $m" -ForegroundColor Red }
+function Die  ($m) { Bad $m; exit 1 }
+
+if ($Help -or -not $Model) {
+    Get-Content $PSCommandPath | Select-Object -Skip 1 -First 27 |
+        ForEach-Object { $_ -replace '^# ?', '' }
+    exit ([int](-not $Model))
+}
+
+if (-not $Cache) { $Cache = Join-Path $Here 'downloads' }
+
+if (-not (Test-Path $Manifest)) { Die "missing $Manifest" }
+$Data = Get-Content $Manifest -Raw | ConvertFrom-Json
+$Spec = $Data.models.$Model
+if (-not $Spec) { Die "model $Model is not in the manifest" }
+
+$Dest = Join-Path $Cache $Model
+New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+
+Say $Spec.title
+Say "images: $Dest"
+
+function Test-Image ($Role) {
+    $img = $Spec.images.$Role
+    if (-not $img) { return $null }
+    $path = Join-Path $Dest $img.name
+    if (-not (Test-Path $path)) { return $null }
+    if ((Get-FileHash $path -Algorithm SHA256).Hash -eq $img.sha256.ToUpper()) { return $path }
+    Warn "cached $($img.name) does not match the manifest, re-downloading"
+    Remove-Item $path -Force
+    return $null
+}
+
+function Get-Image ($Role) {
+    $img = $Spec.images.$Role
+    if (-not $img) { Die "the manifest has no '$Role' image for $Model" }
+
+    $cached = Test-Image $Role
+    if ($cached) { Ok "$($img.name) (cached)"; return $cached }
+
+    $path = Join-Path $Dest $img.name
+    $part = "$path.part"
+    $mib = [math]::Round($img.size / 1MB)
+    Say "downloading $($img.name) ($mib MiB)"
+
+    if ($DryRun) {
+        Write-Host "    would run: Invoke-WebRequest $($img.url) -> $path"
+        return $path
+    }
+
+    try {
+        Invoke-WebRequest -Uri $img.url -OutFile $part -UseBasicParsing
+    } catch {
+        if (Test-Path $part) { Remove-Item $part -Force }
+        Die "download failed: $($img.url)"
+    }
+
+    if ((Get-FileHash $part -Algorithm SHA256).Hash -ne $img.sha256.ToUpper()) {
+        Remove-Item $part -Force
+        Die "$($img.name): sha256 mismatch, refusing to use it"
+    }
+    Move-Item -Force $part $path
+    Ok "$($img.name) (verified)"
+    return $path
+}
+
+# --- what do we need? -------------------------------------------------------
+$Sysupgrade = $null
+if ($Image) {
+    if (-not (Test-Path $Image)) { Die "no such file: $Image" }
+    $Sysupgrade = (Resolve-Path $Image).Path
+    Warn "using $Sysupgrade — not checked against the manifest"
+}
+
+$Factory = Get-Image 'factory'
+if (-not $Sysupgrade) {
+    if ($Model -eq '6j11' -and $Smallbuffers) { $Sysupgrade = Get-Image 'smallbuffers' }
+    else { $Sysupgrade = Get-Image 'sysupgrade' }
+}
+
+if ($DownloadOnly) {
+    if ($Spec.images.initramfs) { Get-Image 'initramfs' | Out-Null }
+    Ok "cached in $Dest"
+    exit 0
+}
+
+if (-not $Spec.flasher) {
+    Warn "there is no SSH flasher for $Model`: the documented route is UART + TFTP"
+    Warn "images are cached in $Dest; see docs/models/JIDU$Model.md"
+    exit 0
+}
+
+Write-Host ''
+Say 'about to flash:'
+Write-Host "      unit      $Router (stock) -> $OpenWrt (OpenWrt)"
+Write-Host "      model     $Model"
+Write-Host "      factory   $(Split-Path $Factory -Leaf)"
+Write-Host "      sysupgrade $(Split-Path $Sysupgrade -Leaf)"
+Write-Host ''
+if (-not $Yes -and -not $DryRun) {
+    Write-Host 'This overwrites the boot chain and cannot be undone over the network.'
+    $answer = Read-Host "Type the model ($Model) to continue"
+    if ($answer -ne $Model) { Die 'aborted' }
+}
+
+$onrouter = Join-Path (Join-Path $Here 'onrouter') "$Model.sh"
+if (-not (Test-Path $onrouter)) { Die "missing $onrouter" }
+
+$sshOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
+$scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
+
+function Invoke-Remote ($target, $command) {
+    if ($DryRun) { Write-Host "    would run: ssh $target $command"; return }
+    & ssh @sshOpts $target $command
+    return $LASTEXITCODE
+}
+
+Say "checking root SSH on $Router"
+if (-not $DryRun) {
+    & ssh @sshOpts "root@$Router" 'cat /proc/mtd >/dev/null' 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Bad "no root SSH on $Router"
+        Die 'unlock first: .\flash.ps1 unlock  (and run .\flash.ps1 backup)'
+    }
+}
+Ok 'root SSH is live'
+
+Say 'uploading the factory image and the on-router script'
+if ($DryRun) {
+    Write-Host "    would run: scp $Factory $onrouter root@$Router:/tmp/"
+} else {
+    & scp @scpOpts $Factory $onrouter "root@$Router`:/tmp/"
+    if ($LASTEXITCODE -ne 0) { Die 'upload failed' }
+}
+
+Say 'writing the idle UBI slot (the unit reboots itself)'
+Invoke-Remote "root@$Router" "sed -i 's/\r$//' /tmp/$Model.sh; sh /tmp/$Model.sh" | Out-Null
+
+Say "waiting for OpenWrt on $OpenWrt (up to 5 minutes)"
+if (-not $DryRun) {
+    $up = $false
+    for ($i = 0; $i -lt 60; $i++) {
+        if (Test-Connection -ComputerName $OpenWrt -Count 1 -Quiet) { $up = $true; break }
+        Start-Sleep -Seconds 5
+    }
+    if (-not $up) { Die "OpenWrt did not answer on $OpenWrt — the unit may need UART recovery" }
+    Start-Sleep -Seconds 5
+    $sshed = $false
+    for ($i = 0; $i -lt 12; $i++) {
+        & ssh @sshOpts "root@$OpenWrt" 'true' 2>$null
+        if ($LASTEXITCODE -eq 0) { $sshed = $true; break }
+        Start-Sleep -Seconds 5
+    }
+    if (-not $sshed) { Die "no SSH on $OpenWrt — the unit may need UART recovery" }
+}
+Ok 'initramfs is up'
+
+Say 'uploading the permanent sysupgrade'
+if ($DryRun) {
+    Write-Host "    would run: scp $Sysupgrade root@$OpenWrt:/tmp/sysupgrade.bin"
+} else {
+    & scp @scpOpts $Sysupgrade "root@$OpenWrt`:/tmp/sysupgrade.bin"
+    if ($LASTEXITCODE -ne 0) { Die 'upload failed' }
+}
+
+Say 'flashing it (sysupgrade -n, settings are not kept)'
+Invoke-Remote "root@$OpenWrt" 'sysupgrade -n /tmp/sysupgrade.bin' | Out-Null
+
+Write-Host ''
+Ok "done. The unit reboots into OpenWrt at http://$OpenWrt — LuCI, root, no password."
+Write-Host "    If it does not come back, recovery is UART + TFTP: docs/models/JIDU$Model.md"
