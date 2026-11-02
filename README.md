@@ -1,41 +1,42 @@
 # Jio AirFiber IDU Unlock & JIDU OpenWrt
 
-Unlock root SSH, back up the stock firmware, and install OpenWrt on supported
-**Jio AirFiber IDU / JIDU AX6000 routers**.
+Unlock root SSH, back up the stock firmware, download verified images, and
+install OpenWrt on supported **Jio AirFiber IDU / JIDU AX6000 routers**.
 
 `idu-unlock` is a network-based Jio AirFiber IDU unlock and OpenWrt toolkit. It
 can identify the router, check firmware compatibility, enable persistent
 **Jio IDU root SSH**, save the factory data and flash partitions, and install
 **JIDU OpenWrt** on supported models without opening the router.
 
-If your goal is **Jio AirFiber OpenWrt**, the command that performs the complete
-install is the firmware flasher:
+`./flash.sh` is the main entry point. It can detect the router, check the
+firmware, unlock root SSH, make a backup, download the right OpenWrt images,
+or run the complete OpenWrt install:
 
 ```bash
-./firmware/fwflash.sh 6j01     # JIDU6201 / 6401 / 6601 / 6701
-./firmware/fwflash.sh 6j11     # JIDU6111 / 6411 / 6611 / 6811 / 6911
+./flash.sh detect
+./flash.sh check
+./flash.sh unlock
+./flash.sh backup
+./flash.sh download
+./flash.sh flash
 ```
 
-On Windows, use `.\firmware\fwflash.ps1 6j01` or
-`.\firmware\fwflash.ps1 6j11`.
-
-It checks for root SSH and runs `./flash.sh unlock` automatically when the
-router is still locked. The top-level `./flash.sh` itself is the
-**unlock + backup** tool; it does not write OpenWrt firmware.
+`./flash.sh flash` detects the model, unlocks root SSH if needed, saves a stock
+backup, downloads and verifies the matching images, asks for a model
+confirmation, and then starts writing OpenWrt on models with a verified SSH
+flash path. JIDU6101 is download + UART/TFTP only for now.
 
 > [!IMPORTANT]
-> **Please, for the love of humanity, stop turning this into a black market.**
-> I am tired. Let this be how somebody's dead e-waste gets a second life instead
-> of one more listing with a markup on a resale site.
->
-> We are irresponsible people. Do not hold us accountable — we are broke and we
-> have no lawyers. What you do with this is yours.
+> **Use the e-waste you already have at home.** This project exists to give an
+> unused Jio IDU a second life, not to create a buy/sell market around unlocked
+> routers. Please do not buy hardware just to flip it at a markup.
 
 > [!NOTE]
-> **The bug, written down.** The
+> **Want the technical disclosure?** For Jio, researchers, or anyone curious
+> about why the unlock works, the
 > [Jio AirFiber whitepaper](https://github.com/wpfyorg/jio-airfiber-whitepaper)
-> explains the `changeUserPassword` command injection in stock firmware, which
-> builds are affected, which build fixes it, and why any of this is public.
+> documents the stock `changeUserPassword` command injection, affected builds,
+> the fixed builds, and the reasoning behind publishing it.
 
 > [!WARNING]
 > Use this only on hardware you own or have explicit permission to modify.
@@ -82,7 +83,7 @@ bypass a forgotten router-admin password.
 
 | Model | Family | Root SSH + backup | Automated OpenWrt install |
 | --- | --- | :---: | :---: |
-| JIDU6101 | MediaTek `6j01` | Yes | No — images can be downloaded, install is UART + TFTP |
+| JIDU6101 | MediaTek `6j01` | Yes | No — images mirrored; install by UART + TFTP |
 | JIDU6201 | MediaTek `6j01` | Yes | Yes |
 | JIDU6401 | MediaTek `6j01` | Yes | Yes |
 | JIDU6601 | MediaTek `6j01` | Yes | Yes |
@@ -122,10 +123,14 @@ chmod +x flash.sh firmware/fwflash.sh
 
 ./flash.sh check
 ./flash.sh backup
+./flash.sh download     # optional: cache + verify the OpenWrt images
+# ./flash.sh flash      # destructive: backup, then install OpenWrt
 ```
 
 `backup` checks the router, unlocks root SSH if needed, and then saves the
-backup in the current directory.
+backup in the current directory. `download` only caches verified firmware;
+`flash` performs the complete install after making a fresh backup on models
+with an automated SSH flash path.
 
 On macOS and Linux, unlocking uses a temporary HTTP callback on port 80. If the
 script says it cannot bind that port, run the command with `sudo`:
@@ -172,9 +177,12 @@ More Windows notes: [docs/WINDOWS.md](docs/WINDOWS.md).
 | `./flash.sh check` | Check firmware compatibility | No |
 | `./flash.sh unlock` | Enable persistent root SSH | Yes |
 | `./flash.sh backup` | Unlock if needed, then save a device backup | Yes |
+| `./flash.sh download` | Detect the model, download and verify its OpenWrt images | No firmware writes |
+| `./flash.sh flash` | Detect, unlock, back up, download, verify, and install OpenWrt | Yes — destructive |
 | `./flash.sh` | Same as `backup` | Yes |
 
-Use the same command names with `.\flash.ps1` on Windows.
+On Windows, `.\flash.ps1` handles detect/check/unlock/backup. OpenWrt download
+and flashing use `.\firmware\fwflash.ps1` directly.
 
 Common options:
 
@@ -318,52 +326,39 @@ More detail: [docs/BACKUP.md](docs/BACKUP.md).
 
 ## Install OpenWrt
 
-The OpenWrt installer is separate from the unlock/backup launcher.
-
-Back up first:
+On macOS/Linux, the normal path is one command:
 
 ```bash
-./flash.sh backup
+./flash.sh flash
 ```
 
-Then run the firmware installer for your hardware family.
+That command detects the model, enables root SSH if needed, creates the stock
+backup, downloads and verifies the correct images, then hands off to the
+firmware installer. If you only want the files, run `./flash.sh download`.
 
-### MediaTek 6J01: JIDU6201 / 6401 / 6601 / 6701
-
-```bash
-./firmware/fwflash.sh 6j01
-```
-
-### Qualcomm 6J11: JIDU6111 / 6411 / 6611 / 6811 / 6911
-
-```bash
-./firmware/fwflash.sh 6j11
-```
-
-Windows:
+Windows uses the lower-level firmware launcher directly:
 
 ```powershell
+# JIDU6101: download + verify only; install by UART + TFTP
+.\firmware\fwflash.ps1 6101 -DownloadOnly
+# JIDU6201 / 6401 / 6601 / 6701
 .\firmware\fwflash.ps1 6j01
+# JIDU6111 / 6411 / 6611 / 6811 / 6911
 .\firmware\fwflash.ps1 6j11
 ```
 
-You do **not** have to run `flash.sh unlock` first. `fwflash` checks root SSH; if
-SSH is missing, it launches the unlocker, asks for the router admin password,
-and continues after root access is available.
+The lower-level `firmware/fwflash.*` tools still work directly on every
+platform. They check root SSH and run the repo unlocker automatically if the
+stock unit is still locked.
 
-Before anything is written, the script shows the model and image names and asks
+Before anything is written, the flasher shows the model and image names and asks
 you to type the model name as confirmation.
 
-### JIDU6101
-
-The current firmware script does not have an SSH flashing path for JIDU6101.
-It can still download and verify the correct files:
-
-```bash
-./firmware/fwflash.sh 6101 --download-only
-```
-
-Installation on 6101 uses the documented UART + TFTP route.
+JIDU6101 is deliberately excluded from automated SSH flashing. The mirrored
+factory UBI predates OpenWrt's September 2026 JioRouter SPI-NAND write fix, and
+its embedded device tree still has the old unsafe pin settings. The repo still
+mirrors and verifies all three JIDU6101 images; use the official 25.12.6
+initramfs + sysupgrade with the documented UART + TFTP route.
 
 ### Useful firmware options
 
@@ -412,8 +407,11 @@ sizes, and SHA-256 hashes.
 
 - **6J01 / 6101 sysupgrade and initramfs:** official OpenWrt 25.12.6
   `mediatek/filogic` builds.
-- **6J01 / 6101 factory UBI:** community factory image required for the current
-  installation route; its SHA-256 is pinned in the manifest.
+- **6J01 factory UBI:** community factory image used by the automated SSH route;
+  its SHA-256 is pinned in the manifest.
+- **6101 factory UBI:** mirrored for archival/recovery use. Its embedded device
+  tree predates the September 2026 SPI-NAND pinctrl fix, so automated SSH
+  flashing is disabled for 6101.
 - **6J11:** community builds from
   [themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
 
@@ -538,9 +536,7 @@ quirks while working on a JIDU6611: an invalid cookie path that caused Python
 `requests` to discard the session cookie, and a persistent admin session that
 could block a new login.
 
-The OpenWrt work also builds on research and firmware work from:
-
-- [the-diy-daddy/6j01_6j11](https://github.com/the-diy-daddy/6j01_6j11)
-- [themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH)
+The 6J11 firmware route uses the community images from
+[themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
 
 If this project helped you, consider starring the repository.

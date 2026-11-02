@@ -14,3 +14,6 @@ partitions.txt
 uboot_env.txt
 AGENTS.md
 .commandcode/
+*.ubi
+*.itb
+firmware/downloads/

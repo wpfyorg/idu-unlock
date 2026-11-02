@@ -4,15 +4,16 @@ Every model this project supports has its own install page. Start with the page
 for your unit: it lists the exact image files, the route that model uses, its
 UART reference, and the parts that differ from its siblings.
 
-The 6j01 pages lead with the SSH shortcut, then the official 25.12.6
-sysupgrade. The UART route is the fallback. The 6j11 pages use the Mayank SSH
-method; UART is recovery only.
+The JIDU6201/6401/6601/6701 pages lead with the SSH shortcut, then the official
+25.12.6 sysupgrade. JIDU6101 uses UART + TFTP because its available factory UBI
+predates the SPI-NAND fix. The 6j11 pages use the Mayank SSH method; UART is
+recovery only.
 The shared procedure, with the reasoning behind each command, is
 [Installing OpenWrt by hand](../../OPENWRT.md).
 
 | Model | Family | Official OpenWrt | Route | UART pins | Status |
 | --- | --- | --- | --- | --- | --- |
-| [JIDU6101](JIDU6101.md) | MediaTek `6j01` | Yes (`jidu6101`) | SSH then official, UART fallback | None published | Official image; SSH primary |
+| [JIDU6101](JIDU6101.md) | MediaTek `6j01` | Yes (`jidu6101`) | UART + TFTP | None published | Images mirrored; automated SSH flash disabled |
 | [JIDU6201](JIDU6201.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | None published | Official image; SSH primary |
 | [JIDU6401](JIDU6401.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6401.jpg) | Official image; SSH primary |
 | [JIDU6601](JIDU6601.md) | MediaTek `6j01` | Yes (`jidu6j01`) | SSH then official, UART fallback | None published | Official image; SSH primary |
@@ -23,9 +24,11 @@ The shared procedure, with the reasoning behind each command, is
 | [JIDU6811](JIDU6811.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6811.jpg) | SSH primary; community |
 | [JIDU6911](JIDU6911.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | [photo](https://github.com/the-diy-daddy/6j01_6j11/blob/main/uart_pins/JIDU6911.jpg) | SSH primary; community |
 
-The 6101's SSH path writes the shared `jidu6j01` stage 1, then the official
-`jidu6101` image with `-F`; its UART path installs the 6101 image without
-forcing.
+The 6101 factory UBI in the mirror has the correct `jidu6101` board identity,
+but it predates the SPI-NAND pinctrl fix below and still contains the old
+`bias-disable` settings. Do not use it for automated NAND writes. Download it
+for archival/recovery purposes; install 6101 with the official initramfs and
+sysupgrade over UART + TFTP.
 
 For the 6j01 official image, use 25.12.6 or newer. Older 25.12 builds could
 silently fail to write the SPI-NAND; the fix is
