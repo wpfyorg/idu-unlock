@@ -384,20 +384,24 @@ class FlashScriptTest(unittest.TestCase):
             root = pathlib.Path(tmp)
             flasher, cache, fake_bin = self._bash_fixture(root)
             trace = root / "scp.log"
+            mounts = root / "mounts"
             mfg_hash = "c" * 64
 
             (fake_bin / "ssh").write_text(
                 "#!/usr/bin/env bash\n"
-                "target=''\nlast=''\n"
+                "target=''\nlast=''\npayload=''\n"
                 "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
-                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
+                "if [ \"$last\" = 'sh -s' ]; then payload=$(cat); last=${payload%%$'\\n'*}; else payload=$last; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
                 "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
                 "  'true') exit 0 ;;\n"
                 "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
-                "  *\"overlayfs:/overlay / overlay \"*) exit \"${OVERLAY_RC:-1}\" ;;\n"
+                "  *overlayfs:/overlay*)\n"
+                "    payload=${payload//\\/proc\\/mounts/$MOUNTS_FIXTURE}\n"
+                "    bash -c \"$payload\"\n"
+                "    exit $? ;;\n"
                 "esac\n"
                 "case \"$last\" in *sha256sum*)\n"
                 f"  printf '{mfg_hash}\\n'; exit 0 ;;\n"
@@ -414,7 +418,11 @@ class FlashScriptTest(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
             env["TRACE"] = str(trace)
-            env["OVERLAY_RC"] = "1"
+            env["MOUNTS_FIXTURE"] = str(mounts)
+            mounts.write_text(
+                "/dev/ubi0_1 /overlay ubifs rw,noatime 0 0\n"
+                "overlayfs:/tmp/root / overlay rw,lowerdir=/,upperdir=/tmp/root/upper 0 0\n"
+            )
             failed = subprocess.run(
                 ["bash", str(flasher), "6101", "--cache", str(cache), "--yes"],
                 text=True,
@@ -425,7 +433,10 @@ class FlashScriptTest(unittest.TestCase):
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("permanent OpenWrt did not come up", failed.stdout + failed.stderr)
 
-            env["OVERLAY_RC"] = "0"
+            mounts.write_text(
+                "/dev/ubi0_1 /overlay ubifs rw,noatime 0 0\n"
+                "overlayfs:/overlay / overlay rw,lowerdir=/rom,upperdir=/overlay/upper 0 0\n"
+            )
             passed = subprocess.run(
                 ["bash", str(flasher), "6101", "--cache", str(cache), "--yes"],
                 text=True,
@@ -447,20 +458,24 @@ class FlashScriptTest(unittest.TestCase):
             flasher = root / "firmware" / "fwflash.ps1"
             shutil.copy2(ROOT / "firmware" / "fwflash.ps1", flasher)
             trace = root / "scp.log"
+            mounts = root / "mounts"
             mfg_hash = "f" * 64
 
             (fake_bin / "ssh").write_text(
                 "#!/usr/bin/env bash\n"
-                "last=''\n"
+                "last=''\npayload=''\n"
                 "for arg in \"$@\"; do last=\"$arg\"; done\n"
-                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
+                "if [ \"$last\" = 'sh -s' ]; then payload=$(cat); last=${payload%%$'\\n'*}; else payload=$last; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
                 "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
                 "  'true') exit 0 ;;\n"
                 "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
-                "  *\"overlayfs:/overlay / overlay \"*) exit \"${OVERLAY_RC:-1}\" ;;\n"
+                "  *overlayfs:/overlay*)\n"
+                "    payload=${payload//\\/proc\\/mounts/$MOUNTS_FIXTURE}\n"
+                "    bash -c \"$payload\"\n"
+                "    exit $? ;;\n"
                 "esac\n"
                 "case \"$last\" in *sha256sum*)\n"
                 f"  printf '{mfg_hash}\\n'; exit 0 ;;\n"
@@ -476,6 +491,7 @@ class FlashScriptTest(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
             env["TRACE"] = str(trace)
+            env["MOUNTS_FIXTURE"] = str(mounts)
             quoted_flasher = str(flasher).replace("'", "''")
             quoted_cache = str(cache).replace("'", "''")
             command = (
@@ -483,7 +499,10 @@ class FlashScriptTest(unittest.TestCase):
                 f"& '{quoted_flasher}' 6101 -Cache '{quoted_cache}' -Yes"
             )
 
-            env["OVERLAY_RC"] = "1"
+            mounts.write_text(
+                "/dev/ubi0_1 /overlay ubifs rw,noatime 0 0\n"
+                "overlayfs:/tmp/root / overlay rw,lowerdir=/,upperdir=/tmp/root/upper 0 0\n"
+            )
             failed = subprocess.run(
                 [powershell, "-NoProfile", "-Command", command],
                 text=True,
@@ -494,7 +513,10 @@ class FlashScriptTest(unittest.TestCase):
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("permanent OpenWrt did not come up", failed.stdout + failed.stderr)
 
-            env["OVERLAY_RC"] = "0"
+            mounts.write_text(
+                "/dev/ubi0_1 /overlay ubifs rw,noatime 0 0\n"
+                "overlayfs:/overlay / overlay rw,lowerdir=/rom,upperdir=/overlay/upper 0 0\n"
+            )
             passed = subprocess.run(
                 [powershell, "-NoProfile", "-Command", command],
                 text=True,
