@@ -441,7 +441,7 @@ else
     if valid_mfg_hash "$FINAL_MFG_HASH"; then
       [ "$FINAL_MFG_HASH" = "$STOCK_MFG_HASH" ] \
         || die "OpenWrt at $OPENWRT is a different router after sysupgrade"
-      if "${SSH_FINAL[@]}" 'grep -Eq "^[^ ]+ / overlay " /proc/mounts' 2>"$SSH_ERR"; then
+      if "${SSH_FINAL[@]}" 'grep -Eq "^[^ ]+ /overlay " /proc/mounts' 2>"$SSH_ERR"; then
         permanent=1
         break
       fi

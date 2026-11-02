@@ -396,7 +396,7 @@ class FlashScriptTest(unittest.TestCase):
                 "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
                 "  'true') exit 0 ;;\n"
                 "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
-                "  'grep -Eq \"^[^ ]+ / overlay \" /proc/mounts') exit \"${OVERLAY_RC:-1}\" ;;\n"
+                "  *\"/overlay \"*) exit \"${OVERLAY_RC:-1}\" ;;\n"
                 "esac\n"
                 "case \"$last\" in *sha256sum*)\n"
                 f"  printf '{mfg_hash}\\n'; exit 0 ;;\n"
@@ -459,7 +459,7 @@ class FlashScriptTest(unittest.TestCase):
                 "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
                 "  'true') exit 0 ;;\n"
                 "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
-                "  'grep -Eq \"^[^ ]+ / overlay \" /proc/mounts') exit \"${OVERLAY_RC:-1}\" ;;\n"
+                "  *\"/overlay \"*) exit \"${OVERLAY_RC:-1}\" ;;\n"
                 "esac\n"
                 "case \"$last\" in *sha256sum*)\n"
                 f"  printf '{mfg_hash}\\n'; exit 0 ;;\n"
@@ -513,7 +513,8 @@ class FlashScriptTest(unittest.TestCase):
                 self.assertIn("MFG", body)
                 self.assertIn("different router", body)
                 self.assertIn("persistent OpenWrt", body)
-                self.assertIn('/ overlay ', body)
+                self.assertIn('/overlay ', body)
+                self.assertNotIn(' / overlay ', body)
                 self.assertLess(body.index("different router"), body.index("uploading the permanent sysupgrade"))
                 self.assertGreater(body.rindex("persistent OpenWrt"), body.index("sysupgrade -n"))
 
