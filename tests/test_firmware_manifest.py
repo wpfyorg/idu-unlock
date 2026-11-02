@@ -65,6 +65,73 @@ class FirmwareManifestTest(unittest.TestCase):
 class FlashScriptTest(unittest.TestCase):
     """The shell entrypoints must stay runnable and reference real models."""
 
+    def test_flash_command_passes_url_hostname_to_ssh_flasher(self):
+        python = shutil.which("python3")
+        if not python:
+            self.skipTest("python3 is not installed")
+
+        cases = (
+            ("https://192.168.31.1", "192.168.31.1"),
+            ("http://192.168.31.1:8080/WCGI", "192.168.31.1"),
+            ("https://router.local", "router.local"),
+            ("192.168.31.1", "192.168.31.1"),
+        )
+        for router_url, ssh_host in cases:
+            with self.subTest(router_url=router_url), tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp)
+                fake_bin = root / "bin"
+                firmware = root / "firmware"
+                fake_bin.mkdir()
+                firmware.mkdir()
+                shutil.copy2(ROOT / "flash.sh", root / "flash.sh")
+                python_stub = fake_bin / "python3"
+                python_stub.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "if [ \"$1\" = '-c' ]; then\n"
+                    "  case \"$2\" in *urlparse*) exec \"$REAL_PYTHON\" \"$@\" ;; esac\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "if [ \"$1\" = '-u' ]; then\n"
+                    "  shift; script=$1; shift\n"
+                    "  case \"$script\" in */idu.py)\n"
+                    "    printf '%s\\n' \"$@\" > \"$DETECT_ARGS\"\n"
+                    "    printf 'MODEL=JIDU6101\\nFAMILY=mediatek\\n'\n"
+                    "    exit 0 ;;\n"
+                    "  esac\n"
+                    "fi\n"
+                    "exit 90\n"
+                )
+                os.chmod(python_stub, 0o755)
+                flasher = firmware / "fwflash.sh"
+                flasher.write_text(
+                    "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FLASH_ARGS\"\n"
+                )
+                os.chmod(flasher, 0o755)
+
+                detect_args = root / "detect.args"
+                flash_args = root / "flash.args"
+                env = os.environ.copy()
+                env.update(
+                    PATH=f"{fake_bin}{os.pathsep}{env['PATH']}",
+                    REAL_PYTHON=python,
+                    DETECT_ARGS=str(detect_args),
+                    FLASH_ARGS=str(flash_args),
+                    PASSWORD="test-password",
+                )
+                result = subprocess.run(
+                    ["bash", str(root / "flash.sh"), "download", "--router", router_url],
+                    text=True,
+                    capture_output=True,
+                    env=env,
+                    cwd=root,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(flash_args.read_text().splitlines()[1:3], ["--router", ssh_host])
+                self.assertEqual(
+                    detect_args.read_text().splitlines()[0:2], ["--router", router_url]
+                )
+
     def _bash_fixture(self, root):
         firmware = root / "firmware"
         onrouter = firmware / "onrouter"

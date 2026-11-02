@@ -179,8 +179,8 @@ run_firmware() {
   }
 
   model="$(firmware_model)" || return 1
-  host="${ROUTER#*://}"
-  host="${host%%/*}"
+  host="$("$PY" -c 'from urllib.parse import urlparse; import sys; print(urlparse(sys.argv[1]).hostname or sys.argv[1])' "$ROUTER")" \
+    || { bad "could not parse router URL: $ROUTER"; return 1; }
 
   local args=( "$model" --router "$host" )
   [ "$VERBOSE" -eq 1 ] && args+=( --verbose )
