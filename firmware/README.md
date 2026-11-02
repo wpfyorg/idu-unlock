@@ -45,10 +45,13 @@ over the network.
    partial file on failure.
 4. Proves it can reach the unit over root SSH. If it cannot, it unlocks the unit
    first (`flash.sh unlock`, asking for the admin password) and checks again.
-5. Uploads the factory image and `onrouter/<model>.sh` to the stock unit.
-6. Runs the on-router script, which rewrites the idle UBI slot and reboots.
-7. Waits for the OpenWrt initramfs on `192.168.1.1`, uploads the sysupgrade, and
-   runs `sysupgrade -n`.
+5. Verifies the connected model and fingerprints its untouched MFG partition.
+6. Uploads the factory image and `onrouter/<model>.sh` to the stock unit.
+7. Runs the on-router script, which rewrites the idle UBI slot and reboots.
+8. Waits for the OpenWrt initramfs on `192.168.1.1` and requires its MFG
+   fingerprint to match the stock router before uploading the sysupgrade.
+9. Runs `sysupgrade -n`, reconnects after the reboot, and reports success only
+   after the same router is running the persistent overlay filesystem.
 
 Images are stored inside the repo, in `firmware/downloads/<model>/`:
 

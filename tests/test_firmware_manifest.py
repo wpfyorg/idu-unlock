@@ -1,5 +1,10 @@
+import hashlib
 import json
+import os
 import pathlib
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -59,6 +64,63 @@ class FirmwareManifestTest(unittest.TestCase):
 
 class FlashScriptTest(unittest.TestCase):
     """The shell entrypoints must stay runnable and reference real models."""
+
+    def _bash_fixture(self, root):
+        firmware = root / "firmware"
+        onrouter = firmware / "onrouter"
+        cache = root / "cache" / "6101"
+        fake_bin = root / "bin"
+        onrouter.mkdir(parents=True)
+        cache.mkdir(parents=True)
+        fake_bin.mkdir()
+
+        flasher = firmware / "fwflash.sh"
+        shutil.copy2(ROOT / "firmware" / "fwflash.sh", flasher)
+        (onrouter / "6101.sh").write_text("#!/bin/sh\nexit 0\n")
+
+        factory = cache / "factory.ubi"
+        sysupgrade = cache / "sysupgrade.bin"
+        factory.write_bytes(b"factory fixture")
+        sysupgrade.write_bytes(b"sysupgrade fixture")
+
+        def image(path):
+            return {
+                "name": path.name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "size": path.stat().st_size,
+                "url": f"https://invalid.example/{path.name}",
+            }
+
+        (firmware / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "6101": {
+                            "title": "JIDU6101 test fixture",
+                            "aliases": ["JIDU6101"],
+                            "flasher": True,
+                            "images": {
+                                "factory": image(factory),
+                                "sysupgrade": image(sysupgrade),
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        return flasher, cache.parent, fake_bin
+
+    def _run_bash_fixture(self, flasher, cache, fake_bin, trace):
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+        env["TRACE"] = str(trace)
+        return subprocess.run(
+            ["bash", str(flasher), "6101", "--cache", str(cache), "--yes"],
+            text=True,
+            capture_output=True,
+            env=env,
+            cwd=flasher.parent.parent,
+        )
 
     def test_scripts_are_executable_and_syntax_checked_elsewhere(self):
         for name in ("fwflash.sh", "fwflash.ps1"):
@@ -148,7 +210,305 @@ class FlashScriptTest(unittest.TestCase):
                 self.assertIn("/tmp/deviceModel", body)
                 self.assertIn("aliases", body)
                 self.assertIn("but the selected image set is", body)
-                self.assertLess(body.index("/tmp/deviceModel"), body.index("uploading the factory image"))
+        self.assertLess(sh.index("\nverify_connected_model\n"), sh.index("uploading the factory image"))
+        self.assertLess(ps.index("but the selected image set is"), ps.index("uploading the factory image"))
+
+    def test_bash_flasher_rejects_wrong_model_before_any_upload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            flasher, cache, fake_bin = self._bash_fixture(root)
+            trace = root / "scp.log"
+
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6J01\\n'; exit 0 ;;\n"
+                "  *) exit 90 ;;\n"
+                "esac\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            os.chmod(fake_bin / "ssh", 0o755)
+            os.chmod(fake_bin / "scp", 0o755)
+
+            result = self._run_bash_fixture(flasher, cache, fake_bin, trace)
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("connected router is JIDU6J01, but the selected image set is 6101", output)
+            self.assertFalse(trace.exists(), "model mismatch must stop before scp")
+
+    def test_powershell_flasher_rejects_wrong_model_before_any_upload(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            _, cache, fake_bin = self._bash_fixture(root)
+            flasher = root / "firmware" / "fwflash.ps1"
+            shutil.copy2(ROOT / "firmware" / "fwflash.ps1", flasher)
+            trace = root / "scp.log"
+
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6J01\\n'; exit 0 ;;\n"
+                "  *) exit 90 ;;\n"
+                "esac\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            os.chmod(fake_bin / "ssh", 0o755)
+            os.chmod(fake_bin / "scp", 0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["TRACE"] = str(trace)
+            result = subprocess.run(
+                [powershell, "-NoProfile", "-File", str(flasher), "6101", "-Cache", str(cache), "-Yes"],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("connected router is JIDU6J01, but the selected image set is 6101", output)
+            self.assertFalse(trace.exists(), "model mismatch must stop before scp")
+
+    def test_powershell_flasher_rejects_different_initramfs_before_sysupgrade_upload(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            _, cache, fake_bin = self._bash_fixture(root)
+            flasher = root / "firmware" / "fwflash.ps1"
+            shutil.copy2(ROOT / "firmware" / "fwflash.ps1", flasher)
+            trace = root / "scp.log"
+            stock_hash = "d" * 64
+            other_hash = "e" * 64
+
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "target=''\nlast=''\n"
+                "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
+                "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
+                "  'true') exit 0 ;;\n"
+                "esac\n"
+                "case \"$last\" in *sha256sum*)\n"
+                f"  if [ \"$target\" = 'root@192.168.31.1' ]; then printf '{stock_hash}\\n'; else printf '{other_hash}\\n'; fi\n"
+                "  exit 0 ;;\n"
+                "esac\n"
+                "exit 90\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            os.chmod(fake_bin / "ssh", 0o755)
+            os.chmod(fake_bin / "scp", 0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["TRACE"] = str(trace)
+            result = subprocess.run(
+                [powershell, "-NoProfile", "-File", str(flasher), "6101", "-Cache", str(cache), "-Yes"],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            output = result.stdout + result.stderr
+            uploads = trace.read_text() if trace.exists() else ""
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("different router; refusing to upload sysupgrade", output)
+            self.assertIn("root@192.168.31.1:/tmp/jidu-factory.ubi", uploads)
+            self.assertNotIn("root@192.168.1.1:/tmp/sysupgrade.bin", uploads)
+
+    def test_bash_flasher_rejects_different_initramfs_before_sysupgrade_upload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            flasher, cache, fake_bin = self._bash_fixture(root)
+            trace = root / "scp.log"
+
+            stock_hash = "a" * 64
+            other_hash = "b" * 64
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "target=''\nlast=''\n"
+                "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
+                "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
+                "  'true') exit 0 ;;\n"
+                "esac\n"
+                "case \"$last\" in *sha256sum*)\n"
+                f"  if [ \"$target\" = 'root@192.168.31.1' ]; then printf '{stock_hash}\\n'; else printf '{other_hash}\\n'; fi\n"
+                "  exit 0 ;;\n"
+                "esac\n"
+                "exit 90\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            os.chmod(fake_bin / "ssh", 0o755)
+            os.chmod(fake_bin / "scp", 0o755)
+
+            result = self._run_bash_fixture(flasher, cache, fake_bin, trace)
+            output = result.stdout + result.stderr
+            uploads = trace.read_text() if trace.exists() else ""
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("different router; refusing to upload sysupgrade", output)
+            self.assertIn("root@192.168.31.1:/tmp/jidu-factory.ubi", uploads)
+            self.assertNotIn("root@192.168.1.1:/tmp/sysupgrade.bin", uploads)
+
+    def test_bash_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            flasher, cache, fake_bin = self._bash_fixture(root)
+            trace = root / "scp.log"
+            mfg_hash = "c" * 64
+
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "target=''\nlast=''\n"
+                "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
+                "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
+                "  'true') exit 0 ;;\n"
+                "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
+                "  'grep -Eq \"^[^ ]+ / overlay \" /proc/mounts') exit \"${OVERLAY_RC:-1}\" ;;\n"
+                "esac\n"
+                "case \"$last\" in *sha256sum*)\n"
+                f"  printf '{mfg_hash}\\n'; exit 0 ;;\n"
+                "esac\n"
+                "exit 90\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            (fake_bin / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n")
+            for command in ("ssh", "scp", "sleep"):
+                os.chmod(fake_bin / command, 0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["TRACE"] = str(trace)
+            env["OVERLAY_RC"] = "1"
+            failed = subprocess.run(
+                ["bash", str(flasher), "6101", "--cache", str(cache), "--yes"],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("permanent OpenWrt did not come up", failed.stdout + failed.stderr)
+
+            env["OVERLAY_RC"] = "0"
+            passed = subprocess.run(
+                ["bash", str(flasher), "6101", "--cache", str(cache), "--yes"],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+            self.assertIn("Permanent OpenWrt is up on the same router", passed.stdout)
+
+    def test_powershell_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            _, cache, fake_bin = self._bash_fixture(root)
+            flasher = root / "firmware" / "fwflash.ps1"
+            shutil.copy2(ROOT / "firmware" / "fwflash.ps1", flasher)
+            trace = root / "scp.log"
+            mfg_hash = "f" * 64
+
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "last=''\n"
+                "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
+                "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
+                "  'true') exit 0 ;;\n"
+                "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
+                "  'grep -Eq \"^[^ ]+ / overlay \" /proc/mounts') exit \"${OVERLAY_RC:-1}\" ;;\n"
+                "esac\n"
+                "case \"$last\" in *sha256sum*)\n"
+                f"  printf '{mfg_hash}\\n'; exit 0 ;;\n"
+                "esac\n"
+                "exit 90\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            os.chmod(fake_bin / "ssh", 0o755)
+            os.chmod(fake_bin / "scp", 0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["TRACE"] = str(trace)
+            quoted_flasher = str(flasher).replace("'", "''")
+            quoted_cache = str(cache).replace("'", "''")
+            command = (
+                "function Start-Sleep { param([int]$Seconds) }; "
+                f"& '{quoted_flasher}' 6101 -Cache '{quoted_cache}' -Yes"
+            )
+
+            env["OVERLAY_RC"] = "1"
+            failed = subprocess.run(
+                [powershell, "-NoProfile", "-Command", command],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("permanent OpenWrt did not come up", failed.stdout + failed.stderr)
+
+            env["OVERLAY_RC"] = "0"
+            passed = subprocess.run(
+                [powershell, "-NoProfile", "-Command", command],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+            self.assertIn("Permanent OpenWrt is up on the same router", passed.stdout)
+
+    def test_flashers_bind_both_openwrt_stages_to_the_stock_router(self):
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        for body, name in ((sh, "fwflash.sh"), (ps, "fwflash.ps1")):
+            with self.subTest(script=name):
+                self.assertIn("sha256sum", body)
+                self.assertIn("MFG", body)
+                self.assertIn("different router", body)
+                self.assertIn("persistent OpenWrt", body)
+                self.assertIn('/ overlay ', body)
+                self.assertLess(body.index("different router"), body.index("uploading the permanent sysupgrade"))
+                self.assertGreater(body.rindex("persistent OpenWrt"), body.index("sysupgrade -n"))
 
     def test_onrouter_scripts_are_forced_to_lf_on_checkout(self):
         attrs = (ROOT / ".gitattributes").read_text()

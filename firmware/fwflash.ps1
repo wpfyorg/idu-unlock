@@ -190,19 +190,25 @@ if (-not (Test-Path $onrouter)) { Die "missing $onrouter" }
 # known_hosts files so stale keys from other routers cannot block this run.
 $stockKh = $null
 $owrtKh = $null
+$finalKh = $null
 $sshErr = $null
 $stockOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
 $scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
 $owrtOpts = @()
+$finalOpts = @()
 if (-not $DryRun) {
     $stockKh = [System.IO.Path]::GetTempFileName()
     $owrtKh = [System.IO.Path]::GetTempFileName()
+    $finalKh = [System.IO.Path]::GetTempFileName()
     $sshErr = [System.IO.Path]::GetTempFileName()
     $stockOpts += @('-o', "UserKnownHostsFile=$stockKh")
     $scpOpts += @('-o', "UserKnownHostsFile=$stockKh")
     $owrtOpts = @('-o', 'StrictHostKeyChecking=accept-new',
                   '-o', "UserKnownHostsFile=$owrtKh",
                   '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=5')
+    $finalOpts = @('-o', 'StrictHostKeyChecking=accept-new',
+                   '-o', "UserKnownHostsFile=$finalKh",
+                   '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=5')
 }
 $stockIdentity = @()
 if ($Key) {
@@ -214,6 +220,7 @@ if ($Key) {
 $owrtScpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new',
                  '-o', "UserKnownHostsFile=$owrtKh",
                  '-o', 'LogLevel=ERROR')
+$mfgIdentityCommand = 'd=$(grep -i mfg /proc/mtd | head -n1 | cut -d: -f1); [ -n "$d" ] || exit 2; command -v sha256sum >/dev/null || exit 3; h=$(sha256sum "/dev/$d") || exit 4; printf "%s\n" "${h%% *}"'
 
 # Native commands write to stderr as they go, and Windows PowerShell 5.1 turns a
 # native stderr line into a terminating error while $ErrorActionPreference is
@@ -255,6 +262,18 @@ function Read-SshText ($Options, $Target, $ErrorFile, $Command) {
         return [pscustomobject]@{ ExitCode = $rc; Text = ($output -join "`n") }
     }
     finally { $ErrorActionPreference = $previous }
+}
+
+function Read-MfgIdentity ($Options, $Target, $ErrorFile) {
+    $probe = Read-SshText $Options $Target $ErrorFile $mfgIdentityCommand
+    if ($probe.ExitCode -ne 0) {
+        Die "could not fingerprint $Target from its MFG partition"
+    }
+    $hash = ([string]$probe.Text).Trim().ToLowerInvariant()
+    if ($hash -notmatch '^[0-9a-f]{64}$') {
+        Die "$Target returned an invalid MFG fingerprint"
+    }
+    return $hash
 }
 
 function Invoke-Scp ($Options, $Source, $Destination) {
@@ -314,6 +333,16 @@ try {
         Ok "connected hardware is $connected"
     }
 
+    if ($DryRun) {
+        Say "would fingerprint the stock router's MFG partition"
+        $stockMfgHash = 'dry-run'
+    }
+    else {
+        Say 'fingerprinting the stock router'
+        $stockMfgHash = Read-MfgIdentity $stockOpts "root@$Router" $sshErr
+        Ok 'captured the stock router identity'
+    }
+
     Say 'uploading the factory image and the on-router script'
     Write-Host "    factory: /tmp/jidu-factory.ubi, script: /tmp/jidu-flash.sh"
     if ($DryRun) {
@@ -354,6 +383,12 @@ try {
             Die 'the unit may need UART recovery: docs/models/ and firmware/README.md'
         }
         Ok 'initramfs is up'
+
+        $initramfsMfgHash = Read-MfgIdentity $owrtOpts "root@$OpenWrt" $sshErr
+        if ($initramfsMfgHash -ne $stockMfgHash) {
+            Die "OpenWrt at $OpenWrt is a different router; refusing to upload sysupgrade"
+        }
+        Ok 'initramfs belongs to the validated router'
     }
 
     Say 'uploading the permanent sysupgrade'
@@ -373,15 +408,39 @@ try {
 
     Write-Host ''
     if ($DryRun) {
+        Say 'would reconnect and verify persistent OpenWrt on the same router'
         Warn 'dry run: nothing was downloaded, written or flashed'
     }
     else {
-        Ok "done. The unit reboots into OpenWrt at http://$OpenWrt - LuCI, root, no password."
-        Write-Host '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md'
+        Say "waiting for permanent OpenWrt on $OpenWrt (up to 3 minutes)"
+        $permanent = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            # A reconnect can briefly hit the initramfs before its reboot. Do
+            # not pin that host key for the permanent system.
+            [System.IO.File]::WriteAllText($finalKh, '')
+            $probe = Read-SshText $finalOpts "root@$OpenWrt" $sshErr $mfgIdentityCommand
+            if ($probe.ExitCode -eq 0) {
+                $finalMfgHash = ([string]$probe.Text).Trim().ToLowerInvariant()
+                if ($finalMfgHash -match '^[0-9a-f]{64}$') {
+                    if ($finalMfgHash -ne $stockMfgHash) {
+                        Die "OpenWrt at $OpenWrt is a different router after sysupgrade"
+                    }
+                    if ((Test-Ssh $finalOpts "root@$OpenWrt" $sshErr 'grep -Eq "^[^ ]+ / overlay " /proc/mounts') -eq 0) {
+                        $permanent = $true
+                        break
+                    }
+                }
+            }
+            Start-Sleep -Seconds 5
+        }
+        if (-not $permanent) {
+            Die 'permanent OpenWrt did not come up on the validated router after sysupgrade'
+        }
+        Ok "done. Permanent OpenWrt is up on the same router at http://$OpenWrt - LuCI, root, no password."
     }
 }
 finally {
-    foreach ($tmp in @($stockKh, $owrtKh, $sshErr)) {
+    foreach ($tmp in @($stockKh, $owrtKh, $finalKh, $sshErr)) {
         if ($tmp -and (Test-Path $tmp)) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
     }
 }

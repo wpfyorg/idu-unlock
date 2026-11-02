@@ -256,12 +256,14 @@ fi
 if [ "$DRY_RUN" = 1 ]; then
   STOCK_KNOWN_HOSTS=/dev/null
   OWRT_KNOWN_HOSTS=/dev/null
+  FINAL_KNOWN_HOSTS=/dev/null
   SSH_ERR=/dev/null
 else
   STOCK_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-stock-kh.XXXXXX")" || die "cannot create a temp file"
   OWRT_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-kh.XXXXXX")" || die "cannot create a temp file"
+  FINAL_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-final-kh.XXXXXX")" || die "cannot create a temp file"
   SSH_ERR="$(mktemp "${TMPDIR:-/tmp}/jidu-err.XXXXXX")" || die "cannot create a temp file"
-  trap 'rm -f "$STOCK_KNOWN_HOSTS" "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
+  trap 'rm -f "$STOCK_KNOWN_HOSTS" "$OWRT_KNOWN_HOSTS" "$FINAL_KNOWN_HOSTS" "$SSH_ERR"' EXIT
 fi
 
 SSH=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" \
@@ -279,6 +281,17 @@ SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KN
              -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
 SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
              -o LogLevel=ERROR)
+SSH_FINAL=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$FINAL_KNOWN_HOSTS" \
+               -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
+
+# The MFG partition is factory data that survives both firmware stages and is
+# unique to the physical unit. Hash it instead of trusting the reused
+# 192.168.1.1 address to still belong to the router we validated on stock.
+MFG_ID_CMD='d=$(grep -i mfg /proc/mtd | head -n1 | cut -d: -f1); [ -n "$d" ] || exit 2; command -v sha256sum >/dev/null || exit 3; h=$(sha256sum "/dev/$d") || exit 4; printf "%s\n" "${h%% *}"'
+
+valid_mfg_hash() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'
+}
 
 run_must() {  # must exit 0
   local what="$1"; shift
@@ -346,6 +359,19 @@ verify_connected_model() {
 
 verify_connected_model
 
+if [ "$DRY_RUN" = 1 ]; then
+  say "would fingerprint the stock router's MFG partition"
+  STOCK_MFG_HASH=dry-run
+else
+  say "fingerprinting the stock router"
+  STOCK_MFG_HASH="$("${SSH[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" \
+    || die "could not hash the stock MFG partition; refusing to flash without device continuity"
+  STOCK_MFG_HASH="$(printf '%s' "$STOCK_MFG_HASH" | tr -d '\r\n')"
+  valid_mfg_hash "$STOCK_MFG_HASH" \
+    || die "stock router returned an invalid MFG fingerprint; refusing to flash"
+  ok "captured the stock router identity"
+fi
+
 ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"
 
@@ -376,6 +402,15 @@ else
     die "the unit may need UART recovery: docs/models/ and firmware/README.md"
   fi
   ok "initramfs is up"
+
+  INITRAMFS_MFG_HASH="$("${SSH_NEW[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" \
+    || die "could not fingerprint the OpenWrt initramfs; refusing to upload sysupgrade"
+  INITRAMFS_MFG_HASH="$(printf '%s' "$INITRAMFS_MFG_HASH" | tr -d '\r\n')"
+  valid_mfg_hash "$INITRAMFS_MFG_HASH" \
+    || die "OpenWrt initramfs returned an invalid MFG fingerprint"
+  [ "$INITRAMFS_MFG_HASH" = "$STOCK_MFG_HASH" ] \
+    || die "OpenWrt at $OPENWRT is a different router; refusing to upload sysupgrade"
+  ok "initramfs belongs to the validated router"
 fi
 
 say "uploading the permanent sysupgrade"
@@ -389,8 +424,31 @@ run_until_reboot "sysupgrade" "${SSH_NEW[@]}" 'sysupgrade -n /tmp/sysupgrade.bin
 
 printf '\n'
 if [ "$DRY_RUN" = 1 ]; then
+  say "would reconnect and verify persistent OpenWrt on the same router"
   warn "dry run: nothing was downloaded, written or flashed"
 else
-  ok "done. The unit reboots into OpenWrt at http://$OPENWRT — LuCI, root, no password."
-  printf '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md\n'
+  say "waiting for permanent OpenWrt on $OPENWRT (up to 3 minutes)"
+  permanent=0
+  for _ in $(seq 1 40); do
+    # If we briefly reconnect to the initramfs before it goes down, do not pin
+    # that host key for the next boot. The MFG hash is the continuity check.
+    : > "$FINAL_KNOWN_HOSTS"
+    FINAL_MFG_HASH="$("${SSH_FINAL[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" || {
+      sleep 5
+      continue
+    }
+    FINAL_MFG_HASH="$(printf '%s' "$FINAL_MFG_HASH" | tr -d '\r\n')"
+    if valid_mfg_hash "$FINAL_MFG_HASH"; then
+      [ "$FINAL_MFG_HASH" = "$STOCK_MFG_HASH" ] \
+        || die "OpenWrt at $OPENWRT is a different router after sysupgrade"
+      if "${SSH_FINAL[@]}" 'grep -Eq "^[^ ]+ / overlay " /proc/mounts' 2>"$SSH_ERR"; then
+        permanent=1
+        break
+      fi
+    fi
+    sleep 5
+  done
+  [ "$permanent" = 1 ] \
+    || die "permanent OpenWrt did not come up on the validated router after sysupgrade"
+  ok "done. Permanent OpenWrt is up on the same router at http://$OPENWRT — LuCI, root, no password."
 fi
