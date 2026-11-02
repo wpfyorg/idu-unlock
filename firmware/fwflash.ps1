@@ -431,7 +431,7 @@ try {
                     if ($finalMfgHash -ne $stockMfgHash) {
                         Die "OpenWrt at $OpenWrt is a different router after sysupgrade"
                     }
-                    if ((Test-Ssh $finalOpts "root@$OpenWrt" $sshErr 'grep -Eq ''^[^ ]+ /overlay '' /proc/mounts') -eq 0) {
+                    if ((Test-Ssh $finalOpts "root@$OpenWrt" $sshErr 'grep -Eq ''^overlayfs:/overlay / overlay '' /proc/mounts') -eq 0) {
                         $permanent = $true
                         break
                     }
