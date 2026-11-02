@@ -159,7 +159,8 @@ class FlashScriptTest(unittest.TestCase):
         self.assertNotIn("Invoke-Remote", body)
         for call in ("$rc = Invoke-Ssh", "$rc = Invoke-Scp", "(Test-Ssh "):
             self.assertIn(call, body)
-        self.assertEqual(body.count("$Command | & ssh @Options $Target 'sh -s'"), 3)
+        self.assertEqual(body.count('$payload = $Command + "`n#"'), 3)
+        self.assertEqual(body.count("$payload | & ssh @Options $Target 'sh -s'"), 3)
         # output must go to the console, not into the caller's variable
         self.assertEqual(body.count("| Out-Host"), 2)
         # 2>&1 turns native stderr into a terminating error on PowerShell 5.1

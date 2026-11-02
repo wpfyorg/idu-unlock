@@ -237,7 +237,11 @@ function Invoke-Ssh ($Options, $Target, $Command) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $Command | & ssh @Options $Target 'sh -s' | Out-Host
+        # Windows PowerShell 5.1 terminates native-pipeline strings with CRLF.
+        # End the actual command with an explicit LF, then leave the automatic
+        # CRLF on a harmless comment line so the router never sees a trailing CR.
+        $payload = $Command + "`n#"
+        $payload | & ssh @Options $Target 'sh -s' | Out-Host
         return $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }
@@ -247,7 +251,8 @@ function Test-Ssh ($Options, $Target, $ErrorFile, $Command = 'true') {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $Command | & ssh @Options $Target 'sh -s' 2>$ErrorFile | Out-Null
+        $payload = $Command + "`n#"
+        $payload | & ssh @Options $Target 'sh -s' 2>$ErrorFile | Out-Null
         return $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }
@@ -257,7 +262,8 @@ function Read-SshText ($Options, $Target, $ErrorFile, $Command) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = $Command | & ssh @Options $Target 'sh -s' 2>$ErrorFile
+        $payload = $Command + "`n#"
+        $output = $payload | & ssh @Options $Target 'sh -s' 2>$ErrorFile
         $rc = $LASTEXITCODE
         return [pscustomobject]@{ ExitCode = $rc; Text = ($output -join "`n") }
     }
