@@ -25,9 +25,9 @@ firmware/
 On Windows:
 
 ```powershell
-.\firmware\fwflash.ps1 6101
-.\firmware\fwflash.ps1 6j01
-.\firmware\fwflash.ps1 6j11
+.\firmware\fwflash.ps1 6101 -Key $HOME\.ssh\idu_rsa
+.\firmware\fwflash.ps1 6j01 -Key $HOME\.ssh\idu_rsa
+.\firmware\fwflash.ps1 6j11 -Key $HOME\.ssh\idu_rsa
 ```
 
 The unit does not need to be unlocked first. If root SSH does not answer,

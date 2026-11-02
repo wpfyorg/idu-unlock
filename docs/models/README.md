@@ -49,4 +49,4 @@ through UART), or a successful `unlock`. Run `./flash.sh check` first. If it
 reports `NO` and SSH is not already enabled, this tool has no software-only
 backup for that unit. The UART route on the model page is then the fallback, and
 you need it before flashing anything. See
-[Firmware matters](../../README.md#firmware-matters).
+[Checking firmware compatibility](../../README.md#checking-firmware-compatibility).

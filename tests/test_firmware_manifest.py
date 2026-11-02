@@ -107,7 +107,8 @@ class FlashScriptTest(unittest.TestCase):
         sh = (ROOT / "firmware" / "fwflash.sh").read_text()
         ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
         # both hand off to the unlocker in the repo root, with the stock address
-        self.assertIn('ROUTER="https://$STOCK" "$UNLOCKER" unlock', sh)
+        self.assertIn('local unlock_args=(unlock --router "https://$STOCK")', sh)
+        self.assertIn('"$UNLOCKER" "${unlock_args[@]}"', sh)
         self.assertIn("unlock --router \"https://$Router\"", ps)
         # the two hosts call out to each other's script, not to a copy
         self.assertIn('UNLOCKER="$HERE/../flash.sh"', sh)
@@ -119,6 +120,39 @@ class FlashScriptTest(unittest.TestCase):
         # a dry run reaches neither the unit nor the unlocker
         self.assertIn("would check root SSH", sh)
         self.assertIn("would check root SSH", ps)
+
+    def test_flashers_isolate_stock_host_keys(self):
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        self.assertIn('UserKnownHostsFile="$STOCK_KNOWN_HOSTS"', sh)
+        self.assertIn('UserKnownHostsFile=$stockKh', ps)
+
+    def test_windows_flasher_forwards_the_stock_ssh_key(self):
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        self.assertIn('[string]$Key', ps)
+        self.assertIn("--key $Key", ps)
+        self.assertIn("'-i', $Key", ps)
+        self.assertIn('automatic unlock on Windows needs an RSA key', ps)
+
+    def test_bash_flasher_forwards_the_stock_ssh_key(self):
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        self.assertIn('--key)           KEY="$2"', sh)
+        self.assertIn('-i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes', sh)
+        self.assertIn('unlock_args+=(--key "$KEY")', sh)
+
+    def test_flashers_verify_the_connected_model_before_uploading(self):
+        sh = (ROOT / "firmware" / "fwflash.sh").read_text()
+        ps = (ROOT / "firmware" / "fwflash.ps1").read_text()
+        for body, name in ((sh, "fwflash.sh"), (ps, "fwflash.ps1")):
+            with self.subTest(script=name):
+                self.assertIn("/tmp/deviceModel", body)
+                self.assertIn("aliases", body)
+                self.assertIn("but the selected image set is", body)
+                self.assertLess(body.index("/tmp/deviceModel"), body.index("uploading the factory image"))
+
+    def test_onrouter_scripts_are_forced_to_lf_on_checkout(self):
+        attrs = (ROOT / ".gitattributes").read_text()
+        self.assertIn("firmware/onrouter/*.sh text eol=lf", attrs)
 
     def test_top_level_bash_launcher_exposes_download_and_flash(self):
         body = (ROOT / "flash.sh").read_text()

@@ -12,6 +12,7 @@
 #
 # Options:
 #   --router HOST   stock unit address (default 192.168.31.1)
+#   --key PATH      SSH private key used for stock root SSH and automatic unlock
 #   --cache DIR     where images are kept (default ./downloads, next to this script)
 #   --image PATH    use a local sysupgrade file instead of downloading one
 #   --image-sha256 HEX
@@ -42,6 +43,7 @@ MANIFEST="$HERE/manifest.json"
 STOCK="192.168.31.1"
 OPENWRT="192.168.1.1"
 CACHE="$HERE/downloads"
+KEY="${KEY:-}"
 IMAGE=""
 IMAGE_SHA=""
 MODEL=""
@@ -57,12 +59,13 @@ warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; }
 die()  { bad "$*"; exit 1; }
 
-usage() { sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     6j01|6j11|6101)  MODEL="$1"; shift ;;
     --router)        STOCK="$2"; shift 2 ;;
+    --key)           KEY="$2"; shift 2 ;;
     --cache)         CACHE="$2"; shift 2 ;;
     --image)         IMAGE="$2"; shift 2 ;;
     --image-sha256)  IMAGE_SHA="$2"; shift 2 ;;
@@ -109,6 +112,15 @@ manifest_field() {
 import json, sys
 data = json.load(open(sys.argv[1]))
 print(data["models"][sys.argv[2]].get(sys.argv[3], ""))
+PY
+}
+
+manifest_aliases() {
+  python3 - "$MANIFEST" "$MODEL" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+for alias in data["models"][sys.argv[2]].get("aliases", []):
+    print(alias)
 PY
 }
 
@@ -242,16 +254,27 @@ fi
 # new host key every time, and 192.168.1.1 is an address other units may have
 # used. Give it its own known_hosts file so a stale key can never block it.
 if [ "$DRY_RUN" = 1 ]; then
+  STOCK_KNOWN_HOSTS=/dev/null
   OWRT_KNOWN_HOSTS=/dev/null
   SSH_ERR=/dev/null
 else
+  STOCK_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-stock-kh.XXXXXX")" || die "cannot create a temp file"
   OWRT_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-kh.XXXXXX")" || die "cannot create a temp file"
   SSH_ERR="$(mktemp "${TMPDIR:-/tmp}/jidu-err.XXXXXX")" || die "cannot create a temp file"
-  trap 'rm -f "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
+  trap 'rm -f "$STOCK_KNOWN_HOSTS" "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
 fi
 
-SSH=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$STOCK")
-SCP=(scp -O -o StrictHostKeyChecking=accept-new)
+SSH=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" \
+         -o ConnectTimeout=10 "root@$STOCK")
+SCP=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS")
+if [ -n "$KEY" ]; then
+  [ -f "$KEY" ] || die "no SSH key at $KEY"
+  SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+           -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" \
+           -o ConnectTimeout=10 "root@$STOCK")
+  SCP=(scp -O -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+           -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS")
+fi
 SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
              -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
 SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
@@ -291,13 +314,37 @@ ensure_root_ssh() {
   fi
   warn "no root SSH yet: unlocking the unit now (it asks for the admin password)"
   [ -x "$UNLOCKER" ] || die "this unit is locked and $UNLOCKER is missing"
-  ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
+  local unlock_args=(unlock --router "https://$STOCK")
+  [ -n "$KEY" ] && unlock_args+=(--key "$KEY")
+  "$UNLOCKER" "${unlock_args[@]}" || die "the unlock failed; nothing was flashed"
   "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null \
     || die "the unit unlocked, but root SSH still does not answer"
   ok "root SSH is live"
 }
 
 ensure_root_ssh
+
+verify_connected_model() {
+  local connected aliases
+  if [ "$DRY_RUN" = 1 ]; then
+    say "would verify the connected hardware model against $MODEL"
+    return 0
+  fi
+
+  say "checking connected hardware model"
+  connected="$("${SSH[@]}" 'cat /tmp/deviceModel 2>/dev/null')" \
+    || die "could not read /tmp/deviceModel; refusing to flash an unknown router"
+  connected="$(printf '%s' "$connected" | tr -d '\r\n')"
+  [ -n "$connected" ] \
+    || die "could not read /tmp/deviceModel; refusing to flash an unknown router"
+
+  aliases="$(manifest_aliases)" || die "cannot read model aliases from $MANIFEST"
+  printf '%s\n' "$aliases" | grep -Fqx "$connected" \
+    || die "connected router is $connected, but the selected image set is $MODEL"
+  ok "connected hardware is $connected"
+}
+
+verify_connected_model
 
 ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"

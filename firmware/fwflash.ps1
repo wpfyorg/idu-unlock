@@ -10,6 +10,7 @@ fwflash.ps1 - fetch and flash an OpenWrt image for a JIDU router, on Windows.
 
 Options:
   -Router HOST     stock unit address (default 192.168.31.1)
+  -Key PATH        RSA private key used for stock root SSH and automatic unlock
   -Cache DIR       where images are kept (default .\downloads, next to this script)
   -Image PATH      use a local sysupgrade file instead of downloading one
   -ImageSha256 HEX the sha256 of -Image; without it you must still confirm
@@ -38,6 +39,7 @@ param(
     [string]$Model,
 
     [string]$Router = '192.168.31.1',
+    [string]$Key,
     [string]$Cache,
     [string]$Image,
     [string]$ImageSha256,
@@ -62,12 +64,13 @@ function Bad  ($m) { Write-Host "[-] $m" -ForegroundColor Red }
 function Die  ($m) { Bad $m; exit 1 }
 
 if ($Help -or -not $Model) {
-    Get-Content $PSCommandPath | Select-Object -Skip 1 -First 27 |
+    Get-Content $PSCommandPath | Select-Object -Skip 1 -First 28 |
         ForEach-Object { $_ -replace '^# ?', '' }
     exit ([int](-not $Model))
 }
 
 if (-not $Cache) { $Cache = Join-Path $Here 'downloads' }
+if (-not $Key -and $env:KEY) { $Key = $env:KEY }
 
 if (-not (Test-Path $Manifest)) { Die "missing $Manifest" }
 $Data = Get-Content $Manifest -Raw | ConvertFrom-Json
@@ -181,21 +184,32 @@ if (-not $Yes -and -not $DryRun) {
 $onrouter = Join-Path (Join-Path $Here 'onrouter') "$Model.sh"
 if (-not (Test-Path $onrouter)) { Die "missing $onrouter" }
 
-$stockOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
-$scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
-
 # OpenWrt on 192.168.1.1 has just booted a fresh initramfs: it makes a new host
 # key every time, and that address may already be in known_hosts from another
-# unit. Give it a throwaway known_hosts file so a stale key cannot block it.
+# unit. Stock units commonly reuse 192.168.31.1 too. Give both sides throwaway
+# known_hosts files so stale keys from other routers cannot block this run.
+$stockKh = $null
 $owrtKh = $null
 $sshErr = $null
+$stockOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
+$scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
 $owrtOpts = @()
 if (-not $DryRun) {
+    $stockKh = [System.IO.Path]::GetTempFileName()
     $owrtKh = [System.IO.Path]::GetTempFileName()
     $sshErr = [System.IO.Path]::GetTempFileName()
+    $stockOpts += @('-o', "UserKnownHostsFile=$stockKh")
+    $scpOpts += @('-o', "UserKnownHostsFile=$stockKh")
     $owrtOpts = @('-o', 'StrictHostKeyChecking=accept-new',
                   '-o', "UserKnownHostsFile=$owrtKh",
                   '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=5')
+}
+$stockIdentity = @()
+if ($Key) {
+    if (-not (Test-Path $Key)) { Die "no SSH key at $Key" }
+    $stockIdentity = @('-i', $Key, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes')
+    $stockOpts += $stockIdentity
+    $scpOpts += $stockIdentity
 }
 $owrtScpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new',
                  '-o', "UserKnownHostsFile=$owrtKh",
@@ -232,6 +246,17 @@ function Test-Ssh ($Options, $Target, $ErrorFile, $Command = 'true') {
     finally { $ErrorActionPreference = $previous }
 }
 
+function Read-SshText ($Options, $Target, $ErrorFile, $Command) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & ssh @Options $Target $Command 2>$ErrorFile
+        $rc = $LASTEXITCODE
+        return [pscustomobject]@{ ExitCode = $rc; Text = ($output -join "`n") }
+    }
+    finally { $ErrorActionPreference = $previous }
+}
+
 function Invoke-Scp ($Options, $Source, $Destination) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -254,16 +279,39 @@ try {
             Warn 'no root SSH yet: unlocking the unit now (it asks for the admin password)'
             $unlocker = Join-Path (Split-Path $Here -Parent) 'flash.ps1'
             if (-not (Test-Path $unlocker)) { Die "this unit is locked and $unlocker is missing" }
+            if (-not $Key) {
+                Die 'automatic unlock on Windows needs an RSA key; pass -Key $HOME\.ssh\idu_rsa'
+            }
             # A separate process: flash.ps1 calls exit, which would end this
             # script too if it were dot-sourced or invoked with &.
             $hostExe = (Get-Process -Id $PID).Path
-            & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router"
+            & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router" --key $Key
             if ($LASTEXITCODE -ne 0) { Die 'the unlock failed; nothing was flashed' }
             if ((Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null') -ne 0) {
                 Die 'the unit unlocked, but root SSH still does not answer'
             }
         }
         Ok 'root SSH is live'
+    }
+
+    if ($DryRun) {
+        Say "would verify the connected hardware model against $Model"
+    }
+    else {
+        Say 'checking connected hardware model'
+        $probe = Read-SshText $stockOpts "root@$Router" $sshErr 'cat /tmp/deviceModel 2>/dev/null'
+        if ($probe.ExitCode -ne 0) {
+            Die 'could not read /tmp/deviceModel; refusing to flash an unknown router'
+        }
+        $connected = ([string]$probe.Text).Trim()
+        if (-not $connected) {
+            Die 'could not read /tmp/deviceModel; refusing to flash an unknown router'
+        }
+        $aliases = @($Spec.aliases | ForEach-Object { [string]$_ })
+        if ($aliases -notcontains $connected) {
+            Die "connected router is $connected, but the selected image set is $Model"
+        }
+        Ok "connected hardware is $connected"
     }
 
     Say 'uploading the factory image and the on-router script'
@@ -333,7 +381,7 @@ try {
     }
 }
 finally {
-    foreach ($tmp in @($owrtKh, $sshErr)) {
+    foreach ($tmp in @($stockKh, $owrtKh, $sshErr)) {
         if ($tmp -and (Test-Path $tmp)) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
     }
 }

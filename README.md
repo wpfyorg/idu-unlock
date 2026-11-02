@@ -340,11 +340,11 @@ Windows uses the lower-level firmware launcher directly:
 
 ```powershell
 # JIDU6101
-.\firmware\fwflash.ps1 6101
+.\firmware\fwflash.ps1 6101 -Key $HOME\.ssh\idu_rsa
 # JIDU6201 / 6401 / 6601 / 6701
-.\firmware\fwflash.ps1 6j01
+.\firmware\fwflash.ps1 6j01 -Key $HOME\.ssh\idu_rsa
 # JIDU6111 / 6411 / 6611 / 6811 / 6911
-.\firmware\fwflash.ps1 6j11
+.\firmware\fwflash.ps1 6j11 -Key $HOME\.ssh\idu_rsa
 ```
 
 The lower-level `firmware/fwflash.*` tools still work directly on every
