@@ -6,7 +6,7 @@ fwflash.ps1 - fetch and flash an OpenWrt image for a JIDU router, on Windows.
   .\fwflash.ps1 6j11                 unlock if needed, then flash a JIDU6J11
   .\fwflash.ps1 6j11 -Smallbuffers   ...using the reduced-buffer sysupgrade build
   .\fwflash.ps1 6j01 -DownloadOnly   cache the images, flash nothing
-  .\fwflash.ps1 6101 -DownloadOnly   cache + verify JIDU6101 images; flash by UART
+  .\fwflash.ps1 6101                 unlock if needed, then flash a JIDU6101
 
 Options:
   -Router HOST     stock unit address (default 192.168.31.1)
@@ -160,7 +160,7 @@ if ($DownloadOnly) {
 }
 
 if (-not $Spec.flasher) {
-    Warn "automatic SSH flashing is disabled for $Model`: the mirrored factory UBI predates the JioRouter SPI-NAND write fix"
+    Warn "there is no SSH flasher for $Model`: the documented route is UART + TFTP"
     Warn "images are cached in $Dest; see docs/models/ for the install route"
     exit 2
 }

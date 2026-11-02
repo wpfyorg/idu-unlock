@@ -23,8 +23,8 @@ or run the complete OpenWrt install:
 
 `./flash.sh flash` detects the model, unlocks root SSH if needed, saves a stock
 backup, downloads and verifies the matching images, asks for a model
-confirmation, and then starts writing OpenWrt on models with a verified SSH
-flash path. JIDU6101 is download + UART/TFTP only for now.
+confirmation, and then starts writing OpenWrt. JIDU6101 uses its own matching
+factory stage, so it follows the same two-stage flow as the other 6J01 models.
 
 > [!IMPORTANT]
 > **Use the e-waste you already have at home.** This project exists to give an
@@ -83,7 +83,7 @@ bypass a forgotten router-admin password.
 
 | Model | Family | Root SSH + backup | Automated OpenWrt install |
 | --- | --- | :---: | :---: |
-| JIDU6101 | MediaTek `6j01` | Yes | No — images mirrored; install by UART + TFTP |
+| JIDU6101 | MediaTek `6j01` | Yes | Yes |
 | JIDU6201 | MediaTek `6j01` | Yes | Yes |
 | JIDU6401 | MediaTek `6j01` | Yes | Yes |
 | JIDU6601 | MediaTek `6j01` | Yes | Yes |
@@ -339,8 +339,8 @@ firmware installer. If you only want the files, run `./flash.sh download`.
 Windows uses the lower-level firmware launcher directly:
 
 ```powershell
-# JIDU6101: download + verify only; install by UART + TFTP
-.\firmware\fwflash.ps1 6101 -DownloadOnly
+# JIDU6101
+.\firmware\fwflash.ps1 6101
 # JIDU6201 / 6401 / 6601 / 6701
 .\firmware\fwflash.ps1 6j01
 # JIDU6111 / 6411 / 6611 / 6811 / 6911
@@ -354,11 +354,11 @@ stock unit is still locked.
 Before anything is written, the flasher shows the model and image names and asks
 you to type the model name as confirmation.
 
-JIDU6101 is deliberately excluded from automated SSH flashing. The mirrored
-factory UBI predates OpenWrt's September 2026 JioRouter SPI-NAND write fix, and
-its embedded device tree still has the old unsafe pin settings. The repo still
-mirrors and verifies all three JIDU6101 images; use the official 25.12.6
-initramfs + sysupgrade with the documented UART + TFTP route.
+JIDU6101 uses a JIDU6101-specific 25.12.6 factory stage followed by the
+official JIDU6101 sysupgrade. Both stages identify as
+`jiorouter_ax6000-jidu6101`, so normal `sysupgrade -n` works without `-F`.
+The factory stage contains the same fixed 25.12.6 initramfs payload as the
+official image, including the September 2026 SPI-NAND pinctrl fix.
 
 ### Useful firmware options
 
@@ -407,11 +407,9 @@ sizes, and SHA-256 hashes.
 
 - **6J01 / 6101 sysupgrade and initramfs:** official OpenWrt 25.12.6
   `mediatek/filogic` builds.
-- **6J01 factory UBI:** community factory image used by the automated SSH route;
-  its SHA-256 is pinned in the manifest.
-- **6101 factory UBI:** mirrored for archival/recovery use. Its embedded device
-  tree predates the September 2026 SPI-NAND pinctrl fix, so automated SSH
-  flashing is disabled for 6101.
+- **6J01 / 6101 factory UBI:** project-packaged UBI wrappers around the official
+  OpenWrt 25.12.6 initramfs payloads. The payloads include the JioRouter
+  SPI-NAND fix; filenames, sizes, and SHA-256 hashes are pinned in the manifest.
 - **6J11:** community builds from
   [themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
 

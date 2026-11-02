@@ -16,10 +16,10 @@
       "flasher": true,
       "images": {
         "factory": {
-          "name": "openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi",
-          "sha256": "5e54b3503f50ec0acca079d1f6926669d02990095e2d6850a9842b14556f2482",
+          "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi",
+          "sha256": "c2644c167e251462203b8f603029ec58c1115060fa05de3debc350edce05a6ca",
           "size": 17170432,
-          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi"
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-factory.ubi"
         },
         "initramfs": {
           "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6j01-initramfs-kernel.bin",
@@ -42,13 +42,13 @@
       ],
       "target": "mediatek/filogic",
       "upstream": "https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/",
-      "flasher": false,
+      "flasher": true,
       "images": {
         "factory": {
-          "name": "openwrt-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-factory.ubi",
-          "sha256": "b96d38977cc3bffa573f27b4fffb13190a66bec4883103ec342da83428c5d84e",
+          "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-factory.ubi",
+          "sha256": "606f9f4d9b6e05d0da6113f8f8f9a96ffb839a58dcea4711fd7c997cdfa073ad",
           "size": 17170432,
-          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-factory.ubi"
+          "url": "https://github.com/wpfyorg/idu-unlock/releases/download/fw-2026.10/openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-factory.ubi"
         },
         "initramfs": {
           "name": "openwrt-25.12.6-mediatek-filogic-jiorouter_ax6000-jidu6101-initramfs-kernel.bin",

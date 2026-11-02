@@ -9,6 +9,7 @@ firmware/
 ├── fwflash.sh         macOS / Linux
 ├── fwflash.ps1        Windows
 └── onrouter/          scripts uploaded to the stock unit and run there
+    ├── 6101.sh
     ├── 6j01.sh
     └── 6j11.sh
 ```
@@ -16,7 +17,7 @@ firmware/
 ## Use
 
 ```bash
-./firmware/fwflash.sh 6101 --download-only  # JIDU6101: download + verify only
+./firmware/fwflash.sh 6101      # JIDU6101
 ./firmware/fwflash.sh 6j01      # JIDU6201 / 6401 / 6601 / 6701
 ./firmware/fwflash.sh 6j11      # JIDU6111 / 6411 / 6611 / 6811 / 6911
 ```
@@ -24,7 +25,7 @@ firmware/
 On Windows:
 
 ```powershell
-.\firmware\fwflash.ps1 6101 -DownloadOnly
+.\firmware\fwflash.ps1 6101
 .\firmware\fwflash.ps1 6j01
 .\firmware\fwflash.ps1 6j11
 ```
@@ -69,28 +70,48 @@ sysupgrade instead), `--smallbuffers` (6J11 reduced-buffer build), `--yes`.
 
 ## 6101
 
-JIDU6101 images are mirrored and fully supported by the downloader, but automatic
-SSH flashing is intentionally disabled. The mirrored JIDU6101 factory UBI was
-built before OpenWrt merged the JioRouter SPI-NAND pinctrl fix in September 2026,
-and its embedded device tree still contains the old `bias-disable` settings on
-`SPI2_CS`, `SPI2_HOLD`, and `SPI2_WP`. That stage can silently fail NAND writes.
+JIDU6101 is automated over SSH. Its factory image wraps the official OpenWrt
+25.12.6 JIDU6101 initramfs in the UBI layout expected by the stock boot chain.
+The embedded device tree contains the fixed SPI-NAND pull-up/pull-down settings,
+and both the temporary system and permanent sysupgrade identify as
+`jiorouter_ax6000-jidu6101`, so no forced `sysupgrade -F` is needed.
 
-Use `./flash.sh download` or `./firmware/fwflash.sh 6101 --download-only` to
-cache and verify the three 6101 images, then follow the UART + TFTP route in the
-model guide using the official 25.12.6 initramfs and sysupgrade.
+`./flash.sh flash` detects 6101, unlocks root SSH if needed, backs up the stock
+partitions, downloads and verifies the matching images, writes the `ubi2` spare
+slot, then installs the official 25.12.6 sysupgrade. UART + TFTP remains the
+recovery path.
 
 ## Where the images come from
 
 | Model | Source | Note |
 | --- | --- | --- |
 | 6J01, 6101 | OpenWrt 25.12.6, `mediatek/filogic` | Official. Upstream ships `-initramfs-kernel.bin` and `-squashfs-sysupgrade.bin` only. |
-| 6J01 factory `.ubi` | community build, 2026-07-28 | **Not covered by OpenWrt checksums.** Used by the automated 6J01 SSH route; sha256 is pinned in the manifest. |
-| 6101 factory `.ubi` | community build, 2026-07-28 | Mirrored and pinned, but **not used for automated flashing** because its embedded DTB predates the SPI-NAND fix. |
+| 6J01 / 6101 factory `.ubi` | project-packaged OpenWrt 25.12.6 initramfs | UBI wrapper uses the stock-compatible `kernel` volume layout; embedded payload is the fixed official 25.12.6 initramfs. SHA-256 is pinned in the manifest. |
 | 6J11 | [`themayankraut/JIO-AX6000-6J11-OpenWRT-SSH` v1.0.0](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH/releases/tag/v1.0.0) | OpenWrt has no `qualcommbe` target and no Jio profile, so this is a community build. Assets are byte-identical to that release. |
 
 All files are mirrored as assets of the `fw-2026.10` release on this repo, so a
 download cannot break because an upstream tag moved. The manifest pins both the
 URL and the sha256.
+
+### Rebuilding the MediaTek factory wrapper
+
+OpenWrt 25.12.6 publishes the fixed `initramfs-kernel.bin`, but does not publish
+the stock-compatible `initramfs-factory.ubi` artifact. `repack_factory.py`
+reuses only the known-good UBI container layout and replaces the entire dynamic
+`kernel` volume payload with the official fixed initramfs:
+
+```bash
+python3 firmware/repack_factory.py \
+  old-factory.ubi \
+  openwrt-25.12.6-...-initramfs-kernel.bin \
+  openwrt-25.12.6-...-initramfs-factory.ubi
+```
+
+The resulting 6J01 and 6101 images keep the stock-compatible 128 KiB PEB / 2 KiB
+I/O UBI layout while booting the official 25.12.6 FIT payload. The release
+artifacts were verified by extracting the UBI volume back out and comparing it
+byte-for-byte with the official initramfs, then checking the embedded DTB for
+the fixed SPI-NAND pull-up/pull-down settings.
 
 ## Risk
 

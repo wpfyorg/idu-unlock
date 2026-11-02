@@ -8,8 +8,7 @@
 #                                ...using the reduced-buffer sysupgrade build
 #   ./fwflash.sh 6j01 --download-only
 #                                cache the images, flash nothing
-#   ./fwflash.sh 6101 --download-only
-#                                cache + verify JIDU6101 images; flash by UART
+#   ./fwflash.sh 6101            unlock if needed, then flash a JIDU6101
 #
 # Options:
 #   --router HOST   stock unit address (default 192.168.31.1)
@@ -220,7 +219,7 @@ fi
 
 # --- flash ------------------------------------------------------------------
 if [ "$(manifest_field flasher)" != "True" ]; then
-  warn "automatic SSH flashing is disabled for $MODEL: the mirrored factory UBI predates the JioRouter SPI-NAND write fix"
+  warn "there is no SSH flasher for $MODEL: the documented route is UART + TFTP"
   warn "images are cached in $DEST; see docs/models/ for the install route"
   exit 2
 fi

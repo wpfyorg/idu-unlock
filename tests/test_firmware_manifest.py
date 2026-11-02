@@ -65,7 +65,7 @@ class FlashScriptTest(unittest.TestCase):
             self.assertTrue((ROOT / "firmware" / name).exists())
 
     def test_onrouter_scripts_guard_the_partition_they_write(self):
-        for name in ("6j01.sh", "6j11.sh"):
+        for name in ("6101.sh", "6j01.sh", "6j11.sh"):
             body = (ROOT / "firmware" / "onrouter" / name).read_text()
             with self.subTest(script=name):
                 # the partition is looked up, never hard-coded...
@@ -79,7 +79,7 @@ class FlashScriptTest(unittest.TestCase):
 
     def test_onrouter_scripts_use_the_exact_uploaded_image(self):
         """A glob over /tmp can pick another model's factory image."""
-        for name in ("6j01.sh", "6j11.sh"):
+        for name in ("6101.sh", "6j01.sh", "6j11.sh"):
             body = (ROOT / "firmware" / "onrouter" / name).read_text()
             with self.subTest(script=name):
                 self.assertIn("/tmp/jidu-factory.ubi", body)
