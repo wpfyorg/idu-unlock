@@ -1,9 +1,48 @@
-# Jio IDU Unlock
+# Jio AirFiber IDU Unlock & JIDU OpenWrt
 
-Unlock root SSH on supported Jio AirFiber IDU routers, make a full backup, and
-optionally install OpenWrt.
+Unlock root SSH, back up the stock firmware, and install OpenWrt on supported
+**Jio AirFiber IDU / JIDU AX6000 routers**.
 
-The project is designed around a simple flow:
+`idu-unlock` is a network-based Jio AirFiber IDU unlock and OpenWrt toolkit. It
+can identify the router, check firmware compatibility, enable persistent
+**Jio IDU root SSH**, save the factory data and flash partitions, and install
+**JIDU OpenWrt** on supported models without opening the router.
+
+If your goal is **Jio AirFiber OpenWrt**, the command that performs the complete
+install is the firmware flasher:
+
+```bash
+./firmware/fwflash.sh 6j01     # JIDU6201 / 6401 / 6601 / 6701
+./firmware/fwflash.sh 6j11     # JIDU6111 / 6411 / 6611 / 6811 / 6911
+```
+
+On Windows, use `.\firmware\fwflash.ps1 6j01` or
+`.\firmware\fwflash.ps1 6j11`.
+
+It checks for root SSH and runs `./flash.sh unlock` automatically when the
+router is still locked. The top-level `./flash.sh` itself is the
+**unlock + backup** tool; it does not write OpenWrt firmware.
+
+> [!IMPORTANT]
+> **Please, for the love of humanity, stop turning this into a black market.**
+> I am tired. Let this be how somebody's dead e-waste gets a second life instead
+> of one more listing with a markup on a resale site.
+>
+> We are irresponsible people. Do not hold us accountable — we are broke and we
+> have no lawyers. What you do with this is yours.
+
+> [!NOTE]
+> **The bug, written down.** The
+> [Jio AirFiber whitepaper](https://github.com/wpfyorg/jio-airfiber-whitepaper)
+> explains the `changeUserPassword` command injection in stock firmware, which
+> builds are affected, which build fixes it, and why any of this is public.
+
+> [!WARNING]
+> Use this only on hardware you own or have explicit permission to modify.
+> Unlocking may void a warranty or breach your service terms, and replacing
+> firmware can brick the device. This project is provided without warranty.
+
+The normal flow is:
 
 ```text
 Jio stock firmware
@@ -15,7 +54,7 @@ Check compatibility
 Unlock root SSH
         |
         v
-Back up every partition
+Back up factory data + flash partitions
         |
         v
 Install OpenWrt (optional)
@@ -24,11 +63,6 @@ Install OpenWrt (optional)
 Everything runs over the network. For supported firmware, you do not need to
 open the router, solder anything, or connect a serial cable just to get root
 SSH and make a backup.
-
-> [!WARNING]
-> Use this project only on hardware you own or have explicit permission to
-> modify. Unlocking or flashing can void a warranty, break your service terms,
-> or brick the router. Keep a backup before flashing anything.
 
 ## What this project does
 
@@ -137,7 +171,7 @@ More Windows notes: [docs/WINDOWS.md](docs/WINDOWS.md).
 | `./flash.sh detect` | Show model and hardware family | No |
 | `./flash.sh check` | Check firmware compatibility | No |
 | `./flash.sh unlock` | Enable persistent root SSH | Yes |
-| `./flash.sh backup` | Unlock if needed, then save a full backup | Yes |
+| `./flash.sh backup` | Unlock if needed, then save a device backup | Yes |
 | `./flash.sh` | Same as `backup` | Yes |
 
 Use the same command names with `.\flash.ps1` on Windows.
