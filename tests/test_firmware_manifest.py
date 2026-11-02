@@ -159,6 +159,7 @@ class FlashScriptTest(unittest.TestCase):
         self.assertNotIn("Invoke-Remote", body)
         for call in ("$rc = Invoke-Ssh", "$rc = Invoke-Scp", "(Test-Ssh "):
             self.assertIn(call, body)
+        self.assertEqual(body.count("$Command | & ssh @Options $Target 'sh -s'"), 3)
         # output must go to the console, not into the caller's variable
         self.assertEqual(body.count("| Out-Host"), 2)
         # 2>&1 turns native stderr into a terminating error on PowerShell 5.1
@@ -222,6 +223,7 @@ class FlashScriptTest(unittest.TestCase):
             (fake_bin / "ssh").write_text(
                 "#!/usr/bin/env bash\n"
                 "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6J01\\n'; exit 0 ;;\n"
@@ -255,6 +257,7 @@ class FlashScriptTest(unittest.TestCase):
             (fake_bin / "ssh").write_text(
                 "#!/usr/bin/env bash\n"
                 "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6J01\\n'; exit 0 ;;\n"
@@ -300,6 +303,7 @@ class FlashScriptTest(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "target=''\nlast=''\n"
                 "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
+                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
@@ -347,6 +351,7 @@ class FlashScriptTest(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "target=''\nlast=''\n"
                 "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
+                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
@@ -384,6 +389,7 @@ class FlashScriptTest(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "target=''\nlast=''\n"
                 "for arg in \"$@\"; do case \"$arg\" in root@*) target=\"$arg\" ;; esac; last=\"$arg\"; done\n"
+                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
@@ -446,6 +452,7 @@ class FlashScriptTest(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "last=''\n"
                 "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "if [ \"$last\" = 'sh -s' ]; then IFS= read -r last || last=''; fi\n"
                 "case \"$last\" in\n"
                 "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"

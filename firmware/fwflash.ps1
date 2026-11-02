@@ -224,10 +224,10 @@ $mfgIdentityCommand = 'd=$(grep -i mfg /proc/mtd | head -n1 | cut -d: -f1); [ -n
 
 # Native commands write to stderr as they go, and Windows PowerShell 5.1 turns a
 # native stderr line into a terminating error while $ErrorActionPreference is
-# Stop. Every ssh and scp call goes through these three helpers: they relax the
-# preference for the duration, send output to the console rather than the
-# pipeline, and return nothing but the exit code - so a caller comparing $rc
-# always compares a number, not an array of output lines plus a number.
+# Stop. It also strips embedded quotes from native command arguments. Send every
+# remote shell command on stdin to `sh -s` so the router receives the command
+# text intact. These helpers also keep native output out of the caller's status
+# variable and return only the exit code where appropriate.
 function Invoke-Ssh ($Options, $Target, $Command) {
     if ($DryRun) {
         $shown = if ($Options) { ($Options -join ' ') + ' ' } else { '' }
@@ -237,7 +237,7 @@ function Invoke-Ssh ($Options, $Target, $Command) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & ssh @Options $Target $Command | Out-Host
+        $Command | & ssh @Options $Target 'sh -s' | Out-Host
         return $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }
@@ -247,7 +247,7 @@ function Test-Ssh ($Options, $Target, $ErrorFile, $Command = 'true') {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & ssh @Options $Target $Command 2>$ErrorFile | Out-Null
+        $Command | & ssh @Options $Target 'sh -s' 2>$ErrorFile | Out-Null
         return $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }
@@ -257,7 +257,7 @@ function Read-SshText ($Options, $Target, $ErrorFile, $Command) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & ssh @Options $Target $Command 2>$ErrorFile
+        $output = $Command | & ssh @Options $Target 'sh -s' 2>$ErrorFile
         $rc = $LASTEXITCODE
         return [pscustomobject]@{ ExitCode = $rc; Text = ($output -join "`n") }
     }
