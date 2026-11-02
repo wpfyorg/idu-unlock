@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ink">#152235</color>
+    <color name="muted">#62748A</color>
+    <color name="navy">#102A43</color>
+    <color name="blue">#1769AA</color>
+    <color name="canvas">#F3F6FA</color>
+    <color name="white">#FFFFFF</color>
+    <color name="warning_bg">#FFF4DB</color>
+    <color name="warning_ink">#694A0B</color>
+    <color name="log_bg">#101923</color>
+    <color name="log_text">#DCE7F2</color>
+</resources>

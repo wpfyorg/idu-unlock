@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jio IDU Unlock</string>
+    <string name="router_url">Router URL</string>
+    <string name="admin_password">Admin password</string>
+    <string name="choose_backup_folder">Choose backup folder</string>
+    <string name="authorization_warning">Use only on a router you own or are authorized to access. Unlock guidance does not change router settings. Backup requires root SSH to be enabled already. Backups include factory credentials and flash data; protect the selected folder.</string>
+</resources>

@@ -251,10 +251,9 @@ Clean-room implementation: the protocol flow is the device's own public API, and
 the code shares nothing substantive with any existing proof of concept (the only
 overlaps are standard Python/HTTP idioms such as the `application/json` header).
 
-An earlier version of this project also automated the community two-stage OpenWrt
-install; that automation is not part of this tool, and nothing here writes
-firmware. The procedure is documented in
-[the-diy-daddy/6j01_6j11](https://github.com/the-diy-daddy/6j01_6j11) — credit for
-working it out belongs there. It is also written out for manual entry in
-[OPENWRT.md](../OPENWRT.md). That repository ships no licence, and neither did the
-proof of concept this work started from, so neither is redistributed here.
+The OpenWrt procedure is documented separately in [OPENWRT.md](../OPENWRT.md).
+Its reported community provenance is Cyborg → GeekyTwins server → WikiForce
+Discord → Sandip → DIY Daddy's public documentation. This chain is based on
+community accounts and has not been independently verified end to end; DIY
+Daddy is credited as a publisher/reference, not as the originator. The separate
+6j11 SSH method is credited to its published source there.
