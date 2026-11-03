@@ -266,7 +266,11 @@ class InjectorTests(unittest.TestCase):
         self.assertGreaterEqual(len(password), idu.PASSWORD_MIN)
         self.assertLessEqual(len(password), idu.PASSWORD_MAX)
         self.assertNotIn("|", password)
-        self.assertTrue(password.isalnum())
+        self.assertTrue(any(c.islower() for c in password))
+        self.assertTrue(any(c.isupper() for c in password))
+        self.assertTrue(any(c.isdigit() for c in password))
+        self.assertIn("-", password)
+        self.assertTrue(all(c.isalnum() or c == "-" for c in password))
 
 
 class PasswordProbeTests(unittest.TestCase):
