@@ -99,6 +99,7 @@ bypass a forgotten router-admin password.
 | JIDU6111 | Qualcomm `6j11` | Yes | Yes |
 | JIDU6411 | Qualcomm `6j11` | Yes | Yes |
 | JIDU6611 | Qualcomm `6j11` | Yes | Yes |
+| JIDU6711 | Qualcomm `6j11` (inferred) | Test required | Not verified |
 | JIDU6811 | Qualcomm `6j11` | Yes | Yes |
 | JIDU6911 | Qualcomm `6j11` | Yes | Yes |
 
