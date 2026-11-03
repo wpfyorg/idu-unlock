@@ -24,7 +24,7 @@
 # (which sets the admin password), then run this and supply that password.
 #
 # On Linux and macOS, unlock/backup/flash may listen on port 80, which is
-# privileged. If binding fails, run those two with sudo. On Linux you can instead
+# privileged. If binding fails, run the affected command with sudo. On Linux you can instead
 # allow unprivileged low ports for this boot:
 #   sudo sysctl net.ipv4.ip_unprivileged_port_start=80
 # On Windows, use .\flash.ps1 instead: WSL2's default NAT cannot receive the
@@ -217,7 +217,12 @@ case "$CMD" in
     ;;
 
   flash)
+    [ -x "$HERE/firmware/fwflash.sh" ] || {
+      bad "missing firmware flasher: $HERE/firmware/fwflash.sh"
+      exit 1
+    }
     describe
+    firmware_model >/dev/null || exit 1
     say "Backing up stock firmware before flashing..."
     idu unlock || exit 1
     idu backup --outdir "$PWD" || exit 1
