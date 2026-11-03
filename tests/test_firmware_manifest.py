@@ -76,6 +76,7 @@ class FlashScriptTest(unittest.TestCase):
             self.skipTest("PowerShell is not installed")
         return powershell
 
+    @unittest.skipIf(os.name == "nt", "Bash integration requires a POSIX host")
     def test_flash_command_passes_url_hostname_to_ssh_flasher(self):
         python = shutil.which("python3")
         if not python:
@@ -293,6 +294,7 @@ class FlashScriptTest(unittest.TestCase):
         self.assertLess(sh.index("\nverify_connected_model\n"), sh.index("uploading the factory image"))
         self.assertLess(ps.index("but the selected image set is"), ps.index("uploading the factory image"))
 
+    @unittest.skipIf(os.name == "nt", "Bash integration requires a POSIX host")
     def test_bash_flasher_rejects_wrong_model_before_any_upload(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -414,6 +416,7 @@ class FlashScriptTest(unittest.TestCase):
             self.assertIn("root@192.168.31.1:/tmp/jidu-factory.ubi", uploads)
             self.assertNotIn("root@192.168.1.1:/tmp/sysupgrade.bin", uploads)
 
+    @unittest.skipIf(os.name == "nt", "Bash integration requires a POSIX host")
     def test_bash_flasher_rejects_different_initramfs_before_sysupgrade_upload(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -453,6 +456,7 @@ class FlashScriptTest(unittest.TestCase):
             self.assertIn("root@192.168.31.1:/tmp/jidu-factory.ubi", uploads)
             self.assertNotIn("root@192.168.1.1:/tmp/sysupgrade.bin", uploads)
 
+    @unittest.skipIf(os.name == "nt", "Bash integration requires a POSIX host")
     def test_bash_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)

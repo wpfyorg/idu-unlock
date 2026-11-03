@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class FlashPreflightTest(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'Bash integration requires a POSIX host')
     def test_flash_rejects_missing_flasher_or_unknown_model_before_unlock(self):
         for missing in (True, False):
             with self.subTest(missing_flasher=missing), tempfile.TemporaryDirectory() as tmp:
