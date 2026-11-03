@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -458,7 +459,7 @@ class FlashScriptTest(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "Bash integration requires a POSIX host")
     def test_bash_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix="idu overlay; ") as tmp:
             root = pathlib.Path(tmp)
             flasher, cache, fake_bin = self._bash_fixture(root)
             trace = root / "scp.log"
@@ -496,7 +497,7 @@ class FlashScriptTest(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
             env["TRACE"] = str(trace)
-            env["MOUNTS_FIXTURE"] = str(mounts)
+            env["MOUNTS_FIXTURE"] = shlex.quote(str(mounts))
             mounts.write_text(
                 "/dev/ubi0_1 /overlay ubifs rw,noatime 0 0\n"
                 "overlayfs:/tmp/root / overlay rw,lowerdir=/,upperdir=/tmp/root/upper 0 0\n"
@@ -528,7 +529,7 @@ class FlashScriptTest(unittest.TestCase):
     def test_powershell_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
         powershell = self._powershell_for_bash_stub_tests()
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix="idu overlay; ") as tmp:
             root = pathlib.Path(tmp)
             _, cache, fake_bin = self._bash_fixture(root)
             flasher = root / "firmware" / "fwflash.ps1"
@@ -567,7 +568,7 @@ class FlashScriptTest(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
             env["TRACE"] = str(trace)
-            env["MOUNTS_FIXTURE"] = str(mounts)
+            env["MOUNTS_FIXTURE"] = shlex.quote(str(mounts))
             quoted_flasher = str(flasher).replace("'", "''")
             quoted_cache = str(cache).replace("'", "''")
             command = (
