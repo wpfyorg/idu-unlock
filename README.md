@@ -534,7 +534,8 @@ quirks while working on a JIDU6611: an invalid cookie path that caused Python
 `requests` to discard the session cookie, and a persistent admin session that
 could block a new login.
 
-The 6J11 firmware route uses the community images from
-[themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
+Thanks to **Cyborg**, [**DIY Daddy**](https://github.com/the-diy-daddy/6j01_6j11),
+and [**Mayank Raut**](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH)
+for sharing their Jio router flashing work and resources.
 
 If this project helped you, consider starring the repository.
