@@ -65,6 +65,17 @@ class FirmwareManifestTest(unittest.TestCase):
 class FlashScriptTest(unittest.TestCase):
     """The shell entrypoints must stay runnable and reference real models."""
 
+    def _powershell_for_bash_stub_tests(self):
+        if os.name == "nt":
+            self.skipTest(
+                "PowerShell integration fixtures use Bash ssh/scp stubs; "
+                "native Windows could resolve real OpenSSH instead"
+            )
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is not installed")
+        return powershell
+
     def test_flash_command_passes_url_hostname_to_ssh_flasher(self):
         python = shutil.which("python3")
         if not python:
@@ -311,9 +322,7 @@ class FlashScriptTest(unittest.TestCase):
             self.assertFalse(trace.exists(), "model mismatch must stop before scp")
 
     def test_powershell_flasher_rejects_wrong_model_before_any_upload(self):
-        powershell = shutil.which("pwsh") or shutil.which("powershell")
-        if not powershell:
-            self.skipTest("PowerShell is not installed")
+        powershell = self._powershell_for_bash_stub_tests()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -354,9 +363,7 @@ class FlashScriptTest(unittest.TestCase):
             self.assertFalse(trace.exists(), "model mismatch must stop before scp")
 
     def test_powershell_flasher_rejects_different_initramfs_before_sysupgrade_upload(self):
-        powershell = shutil.which("pwsh") or shutil.which("powershell")
-        if not powershell:
-            self.skipTest("PowerShell is not installed")
+        powershell = self._powershell_for_bash_stub_tests()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -515,9 +522,7 @@ class FlashScriptTest(unittest.TestCase):
             self.assertIn("Permanent OpenWrt is up on the same router", passed.stdout)
 
     def test_powershell_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
-        powershell = shutil.which("pwsh") or shutil.which("powershell")
-        if not powershell:
-            self.skipTest("PowerShell is not installed")
+        powershell = self._powershell_for_bash_stub_tests()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
