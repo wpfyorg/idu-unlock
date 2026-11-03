@@ -914,8 +914,9 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
     """Exploit the API to gain root SSH.
 
     The firmware version is a hint; the password-history probe inside the
-    vector is authoritative. Nothing is generated here: with no --key the
-    router is left with passwordless root and a persistent SSH startup script.
+    vector is authoritative. A new unlock installs a persistent SSH startup
+    script and, without --key, leaves root passwordless. Existing reachable
+    root SSH is left as found; its persistence is not checked.
     """
     # An already-unlocked unit needs no exploit. A unit set up through UART can
     # still be backed up even when this firmware is outside the vulnerable
@@ -1309,8 +1310,9 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--password", default=FACTORY_PASSWORD,
                         help=f"router admin password (default {FACTORY_PASSWORD})")
     parser.add_argument("--key", default=None,
-                        help="RSA key for SSH. Optional: with no key the tool "
-                             "leaves root passwordless. Unlock installs a persistent SSH startup script.")
+                        help="RSA key for SSH. A new unlock without a key leaves root "
+                             "passwordless and installs a persistent SSH startup script; "
+                             "existing root SSH is left as found.")
     parser.add_argument("--patience", type=int, default=900,
                         help="seconds to wait for a free admin session")
     parser.add_argument("--address", default=None,

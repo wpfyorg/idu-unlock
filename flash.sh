@@ -13,8 +13,9 @@
 # Options:
 #   --router URL    router base URL (default https://192.168.31.1)
 #   --password P    router admin password (prompted if omitted)
-#   --key PATH      SSH key. Without a key, root is left passwordless.
-#                   Unlock installs a persistent SSH startup script.
+#   --key PATH      SSH key. A new unlock without a key leaves root passwordless.
+#                   A new unlock installs a persistent SSH startup script;
+#                   existing root SSH is left as found.
 #   --address IP    local address the router should call back on (VPN/WSL)
 #   --force         send the payloads even when check says NO (advanced)
 #   -v, --verbose   show the per-command detail behind each method
@@ -112,7 +113,7 @@ else
 fi
 
 # ---- ssh key ------------------------------------------------------------- #
-# Optional, and never generated: without --key unlock leaves root passwordless.
+# Optional, and never generated: a new unlock without --key leaves root passwordless.
 
 # ---- password ------------------------------------------------------------ #
 if [ -z "$PASSWORD" ]; then
