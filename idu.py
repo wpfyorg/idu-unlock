@@ -632,8 +632,7 @@ class Shell:
 def installer_script(address: str, pubkey: str | None = None) -> str:
     """The script the router downloads: root access, and keeps dropbear alive.
 
-    With no key the router is left with passwordless root and no key installed,
-    so nothing of ours stays on it — the same choice the driver's --key makes.
+    With no key the router is left with passwordless root and no key installed.
 
     The vendor's /etc/init.d/dropbear force-disables SSH on every boot of a
     Release build, and this firmware has no /etc/init.d/rc.local, so persistence
@@ -916,7 +915,7 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
 
     The firmware version is a hint; the password-history probe inside the
     vector is authoritative. Nothing is generated here: with no --key the
-    router is left with passwordless root and nothing of ours installed on it.
+    router is left with passwordless root and a persistent SSH startup script.
     """
     # An already-unlocked unit needs no exploit. A unit set up through UART can
     # still be backed up even when this firmware is outside the vulnerable
@@ -1311,7 +1310,7 @@ def main(argv: list | None = None) -> int:
                         help=f"router admin password (default {FACTORY_PASSWORD})")
     parser.add_argument("--key", default=None,
                         help="RSA key for SSH. Optional: with no key the tool "
-                             "leaves root passwordless and installs nothing.")
+                             "leaves root passwordless. Unlock installs a persistent SSH startup script.")
     parser.add_argument("--patience", type=int, default=900,
                         help="seconds to wait for a free admin session")
     parser.add_argument("--address", default=None,

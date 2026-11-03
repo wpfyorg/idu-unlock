@@ -13,8 +13,8 @@
 # Options:
 #   --router URL    router base URL (default https://192.168.31.1)
 #   --password P    router admin password (prompted if omitted)
-#   --key PATH      SSH key. Optional: with no key root is left passwordless and
-#                   nothing of ours is installed on the router
+#   --key PATH      SSH key. Without a key, root is left passwordless.
+#                   Unlock installs a persistent SSH startup script.
 #   --address IP    local address the router should call back on (VPN/WSL)
 #   --force         send the payloads even when check says NO (advanced)
 #   -v, --verbose   show the per-command detail behind each method
@@ -27,8 +27,9 @@
 # privileged. If binding fails, run the affected command with sudo. On Linux you can instead
 # allow unprivileged low ports for this boot:
 #   sudo sysctl net.ipv4.ip_unprivileged_port_start=80
-# On Windows, use .\flash.ps1 instead: WSL2's default NAT cannot receive the
-# router's callback.
+# On Windows, use .\flash.ps1 for unlock and backup: WSL2's default NAT cannot
+# receive the router's callback. For OpenWrt downloads and flashing, use
+# .\firmware\fwflash.ps1; see the README for model-specific commands.
 #
 # Only run against equipment you own or are explicitly authorised to test.
 # Provided as is, without warranty, without liability — see the README.
@@ -111,8 +112,7 @@ else
 fi
 
 # ---- ssh key ------------------------------------------------------------- #
-# Optional, and never generated: with no --key the unlock leaves root
-# passwordless and installs nothing on the router.
+# Optional, and never generated: without --key unlock leaves root passwordless.
 
 # ---- password ------------------------------------------------------------ #
 if [ -z "$PASSWORD" ]; then
@@ -223,6 +223,7 @@ case "$CMD" in
     }
     describe
     firmware_model >/dev/null || exit 1
+    say "Unlock enables persistent root SSH. If flashing fails, stock may remain unlocked."
     say "Backing up stock firmware before flashing..."
     idu unlock || exit 1
     idu backup --outdir "$PWD" || exit 1
