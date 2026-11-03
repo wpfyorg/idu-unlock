@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 #
-# flash.sh — root access + full backup for JIDU routers. No firmware is written.
+# flash.sh — one entry point for JIDU root access, backup, and OpenWrt.
 #
 #   ./flash.sh                 verify the router -> unlock root SSH -> back it up
 #   ./flash.sh check           can this unit be unlocked? (read-only, safe to run in bulk)
 #   ./flash.sh unlock          root SSH only (persistent, survives reboots)
-#   ./flash.sh backup          factory credentials + a copy of every partition
+#   ./flash.sh backup          unlock if needed, then save the stock device data
+#   ./flash.sh download        detect the model, download + verify its OpenWrt images
+#   ./flash.sh flash           backup first, then download + install OpenWrt
 #   ./flash.sh detect          identify the model, change nothing
 #
 # Options:
 #   --router URL    router base URL (default https://192.168.31.1)
 #   --password P    router admin password (prompted if omitted)
-#   --key PATH      SSH key. Optional: with no key root is left passwordless and
-#                   nothing of ours is installed on the router
+#   --key PATH      Optional SSH key. A new unlock clears the root password
+#                   whether or not a key is supplied, and installs persistent
+#                   SSH. Existing root SSH is left as found.
 #   --address IP    local address the router should call back on (VPN/WSL)
 #   --force         send the payloads even when check says NO (advanced)
 #   -v, --verbose   show the per-command detail behind each method
@@ -21,12 +24,13 @@
 # until the setup wizard is completed in the web UI. Reset it, finish the wizard
 # (which sets the admin password), then run this and supply that password.
 #
-# On Linux and macOS, unlock/backup listen for the router on port 80, which is
-# privileged. If binding fails, run those two with sudo. On Linux you can instead
+# On Linux and macOS, unlock/backup/flash may listen on port 80, which is
+# privileged. If binding fails, run the affected command with sudo. On Linux you can instead
 # allow unprivileged low ports for this boot:
 #   sudo sysctl net.ipv4.ip_unprivileged_port_start=80
-# On Windows, use .\flash.ps1 instead: WSL2's default NAT cannot receive the
-# router's callback.
+# On Windows, use .\flash.ps1 for unlock and backup: WSL2's default NAT cannot
+# receive the router's callback. For OpenWrt downloads and flashing, use
+# .\firmware\fwflash.ps1; see the README for model-specific commands.
 #
 # Only run against equipment you own or are explicitly authorised to test.
 # Provided as is, without warranty, without liability — see the README.
@@ -48,12 +52,12 @@ say()  { printf '\033[1;34m[*]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; }
 
 usage() {
-  sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    unlock|backup|detect|check) CMD="$1"; shift ;;
+    unlock|backup|download|flash|detect|check) CMD="$1"; shift ;;
     --router)   ROUTER="$2";   shift 2 ;;
     --password) PASSWORD="$2"; shift 2 ;;
     --key)      KEY="$2";      shift 2 ;;
@@ -61,12 +65,14 @@ while [ $# -gt 0 ]; do
     --force)    FORCE=1;       shift ;;
     -v|--verbose) VERBOSE=1;   shift ;;
     -h|--help)  usage; exit 0 ;;
-    flash)      bad "this tool no longer writes firmware — use it for root access and backups."; exit 2 ;;
     -*)         bad "unknown option: $1"; usage; exit 2 ;;
     *)          bad "unexpected argument: $1"; usage; exit 2 ;;
   esac
 done
 [ -n "$CMD" ] || CMD="auto"
+
+DETECTED_MODEL=""
+DETECTED_FAMILY=""
 
 # ---- an interpreter that has `requests` ---------------------------------- #
 #
@@ -107,8 +113,7 @@ else
 fi
 
 # ---- ssh key ------------------------------------------------------------- #
-# Optional, and never generated: with no --key the unlock leaves root
-# passwordless and installs nothing on the router.
+# Optional, and never generated: a new unlock clears root's password with or without a key.
 
 # ---- password ------------------------------------------------------------ #
 if [ -z "$PASSWORD" ]; then
@@ -145,10 +150,45 @@ describe() {
     bad "  * the password is wrong (the router locks out after ~5 tries)."
     exit 1
   fi
+  DETECTED_MODEL="$(printf '%s\n' "$out" | sed -n 's/^MODEL=//p' | tail -n 1)"
+  DETECTED_FAMILY="$(printf '%s\n' "$out" | sed -n 's/^FAMILY=//p' | tail -n 1)"
   # MODEL=/FAMILY= are how this driver reads the family; the user gets the two
   # human-readable lines instead.
   printf '%s\n' "$out" | grep -v -e '^MODEL=' -e '^FAMILY='
   NOBANNER=1        # shown once, above - don't repeat it on every later call
+}
+
+firmware_model() {
+  case "$DETECTED_MODEL" in
+    JIDU6101) echo "6101" ;;
+    JIDU6J01|JIDU6201|JIDU6401|JIDU6601|JIDU6701) echo "6j01" ;;
+    JIDU6J11|JIDU6111|JIDU6411|JIDU6611|JIDU6811|JIDU6911) echo "6j11" ;;
+    *)
+      bad "no OpenWrt image set is registered for model: ${DETECTED_MODEL:-unknown}"
+      return 1
+      ;;
+  esac
+}
+
+run_firmware() {
+  local action="$1" model host
+  local flasher="$HERE/firmware/fwflash.sh"
+
+  [ -x "$flasher" ] || {
+    bad "missing firmware flasher: $flasher"
+    return 1
+  }
+
+  model="$(firmware_model)" || return 1
+  host="$("$PY" -c 'from urllib.parse import urlparse; import sys; print(urlparse(sys.argv[1]).hostname or sys.argv[1])' "$ROUTER")" \
+    || { bad "could not parse router URL: $ROUTER"; return 1; }
+
+  local args=( "$model" --router "$host" )
+  [ "$VERBOSE" -eq 1 ] && args+=( --verbose )
+  [ "$action" = "download" ] && args+=( --download-only )
+
+  PASSWORD="$PASSWORD" KEY="$KEY" ADDRESS="$ADDRESS" \
+    "$flasher" "${args[@]}"
 }
 
 case "$CMD" in
@@ -170,6 +210,25 @@ case "$CMD" in
     describe
     idu unlock || exit 1
     idu backup --outdir "$PWD" || exit 1
+    ;;
+
+  download)
+    describe
+    run_firmware download || exit 1
+    ;;
+
+  flash)
+    [ -x "$HERE/firmware/fwflash.sh" ] || {
+      bad "missing firmware flasher: $HERE/firmware/fwflash.sh"
+      exit 1
+    }
+    describe
+    firmware_model >/dev/null || exit 1
+    say "Unlock enables persistent root SSH. If flashing fails, stock may remain unlocked."
+    say "Backing up stock firmware before flashing..."
+    idu unlock || exit 1
+    idu backup --outdir "$PWD" || exit 1
+    run_firmware flash || exit 1
     ;;
 
   auto)

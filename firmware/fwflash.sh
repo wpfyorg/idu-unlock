@@ -8,10 +8,11 @@
 #                                ...using the reduced-buffer sysupgrade build
 #   ./fwflash.sh 6j01 --download-only
 #                                cache the images, flash nothing
-#   ./fwflash.sh 6101            downloads only: no SSH flasher for 6101
+#   ./fwflash.sh 6101            unlock if needed, then flash a JIDU6101
 #
 # Options:
 #   --router HOST   stock unit address (default 192.168.31.1)
+#   --key PATH      SSH private key used for stock root SSH and automatic unlock
 #   --cache DIR     where images are kept (default ./downloads, next to this script)
 #   --image PATH    use a local sysupgrade file instead of downloading one
 #   --image-sha256 HEX
@@ -42,6 +43,7 @@ MANIFEST="$HERE/manifest.json"
 STOCK="192.168.31.1"
 OPENWRT="192.168.1.1"
 CACHE="$HERE/downloads"
+KEY="${KEY:-}"
 IMAGE=""
 IMAGE_SHA=""
 MODEL=""
@@ -57,12 +59,13 @@ warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; }
 die()  { bad "$*"; exit 1; }
 
-usage() { sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     6j01|6j11|6101)  MODEL="$1"; shift ;;
     --router)        STOCK="$2"; shift 2 ;;
+    --key)           KEY="$2"; shift 2 ;;
     --cache)         CACHE="$2"; shift 2 ;;
     --image)         IMAGE="$2"; shift 2 ;;
     --image-sha256)  IMAGE_SHA="$2"; shift 2 ;;
@@ -109,6 +112,15 @@ manifest_field() {
 import json, sys
 data = json.load(open(sys.argv[1]))
 print(data["models"][sys.argv[2]].get(sys.argv[3], ""))
+PY
+}
+
+manifest_aliases() {
+  python3 - "$MANIFEST" "$MODEL" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+for alias in data["models"][sys.argv[2]].get("aliases", []):
+    print(alias)
 PY
 }
 
@@ -219,9 +231,9 @@ fi
 
 # --- flash ------------------------------------------------------------------
 if [ "$(manifest_field flasher)" != "True" ]; then
-  warn "there is no SSH flasher for $MODEL: the documented route for this board is UART + TFTP"
+  warn "there is no SSH flasher for $MODEL: the documented route is UART + TFTP"
   warn "images are cached in $DEST; see docs/models/ for the install route"
-  exit 0
+  exit 2
 fi
 
 printf '\n'
@@ -238,26 +250,48 @@ if [ "$ASSUME_YES" = 0 ] && [ "$DRY_RUN" = 0 ]; then
   [ "$answer" = "$MODEL" ] || die "aborted"
 fi
 
-# Stock Dropbear can regenerate host keys on boot, so use a per-run known_hosts
-# file instead of letting a stale personal entry look like a locked router.
-# OpenWrt initramfs also gets a fresh key at 192.168.1.1 on each boot.
+# The OpenWrt side is a device that has just booted a fresh initramfs: it makes a
+# new host key every time, and 192.168.1.1 is an address other units may have
+# used. Give it its own known_hosts file so a stale key can never block it.
 if [ "$DRY_RUN" = 1 ]; then
   STOCK_KNOWN_HOSTS=/dev/null
   OWRT_KNOWN_HOSTS=/dev/null
+  FINAL_KNOWN_HOSTS=/dev/null
   SSH_ERR=/dev/null
 else
   STOCK_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-stock-kh.XXXXXX")" || die "cannot create a temp file"
   OWRT_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-kh.XXXXXX")" || die "cannot create a temp file"
+  FINAL_KNOWN_HOSTS="$(mktemp "${TMPDIR:-/tmp}/jidu-final-kh.XXXXXX")" || die "cannot create a temp file"
   SSH_ERR="$(mktemp "${TMPDIR:-/tmp}/jidu-err.XXXXXX")" || die "cannot create a temp file"
-  trap 'rm -f "$STOCK_KNOWN_HOSTS" "$OWRT_KNOWN_HOSTS" "$SSH_ERR"' EXIT
+  trap 'rm -f "$STOCK_KNOWN_HOSTS" "$OWRT_KNOWN_HOSTS" "$FINAL_KNOWN_HOSTS" "$SSH_ERR"' EXIT
 fi
 
-SSH=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" -o ConnectTimeout=10 "root@$STOCK")
+SSH=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" \
+         -o ConnectTimeout=10 "root@$STOCK")
 SCP=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS")
+if [ -n "$KEY" ]; then
+  [ -f "$KEY" ] || die "no SSH key at $KEY"
+  SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+           -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS" \
+           -o ConnectTimeout=10 "root@$STOCK")
+  SCP=(scp -O -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+           -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STOCK_KNOWN_HOSTS")
+fi
 SSH_NEW=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
              -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
 SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT_KNOWN_HOSTS" \
              -o LogLevel=ERROR)
+SSH_FINAL=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$FINAL_KNOWN_HOSTS" \
+               -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
+
+# The MFG partition is factory data that survives both firmware stages and is
+# unique to the physical unit. Hash it instead of trusting the reused
+# 192.168.1.1 address to still belong to the router we validated on stock.
+MFG_ID_CMD='d=$(grep -i mfg /proc/mtd | head -n1 | cut -d: -f1); [ -n "$d" ] || exit 2; command -v sha256sum >/dev/null || exit 3; h=$(sha256sum "/dev/$d") || exit 4; printf "%s\n" "${h%% *}"'
+
+valid_mfg_hash() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'
+}
 
 run_must() {  # must exit 0
   local what="$1"; shift
@@ -293,23 +327,53 @@ ensure_root_ssh() {
   fi
   warn "no root SSH yet: unlocking the unit now (it asks for the admin password)"
   [ -x "$UNLOCKER" ] || die "this unit is locked and $UNLOCKER is missing"
-  if [ "$(id -u)" -eq 0 ]; then
-    ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
-  elif command -v sudo >/dev/null 2>&1; then
-    warn "unlock needs local port 80; requesting elevated permission for the unlock step only"
-    sudo -E env ROUTER="https://$STOCK" "$UNLOCKER" unlock || die "the unlock failed; nothing was flashed"
-  else
-    die "unlock needs local port 80; run the unlock step with elevated privileges, then rerun this flasher"
-  fi
+  local unlock_args=(unlock --router "https://$STOCK")
+  [ -n "$KEY" ] && unlock_args+=(--key "$KEY")
+  "$UNLOCKER" "${unlock_args[@]}" || die "the unlock failed; nothing was flashed"
   "${SSH[@]}" 'cat /proc/mtd >/dev/null' 2>/dev/null \
     || die "the unit unlocked, but root SSH still does not answer"
   ok "root SSH is live"
 }
 
+ensure_root_ssh
+
+verify_connected_model() {
+  local connected aliases
+  if [ "$DRY_RUN" = 1 ]; then
+    say "would verify the connected hardware model against $MODEL"
+    return 0
+  fi
+
+  say "checking connected hardware model"
+  connected="$("${SSH[@]}" 'cat /tmp/deviceModel 2>/dev/null')" \
+    || die "could not read /tmp/deviceModel; refusing to flash an unknown router"
+  connected="$(printf '%s' "$connected" | tr -d '\r\n')"
+  [ -n "$connected" ] \
+    || die "could not read /tmp/deviceModel; refusing to flash an unknown router"
+
+  aliases="$(manifest_aliases)" || die "cannot read model aliases from $MANIFEST"
+  printf '%s\n' "$aliases" | grep -Fqx "$connected" \
+    || die "connected router is $connected, but the selected image set is $MODEL"
+  ok "connected hardware is $connected"
+}
+
+verify_connected_model
+
+if [ "$DRY_RUN" = 1 ]; then
+  say "would fingerprint the stock router's MFG partition"
+  STOCK_MFG_HASH=dry-run
+else
+  say "fingerprinting the stock router"
+  STOCK_MFG_HASH="$("${SSH[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" \
+    || die "could not hash the stock MFG partition; refusing to flash without device continuity"
+  STOCK_MFG_HASH="$(printf '%s' "$STOCK_MFG_HASH" | tr -d '\r\n')"
+  valid_mfg_hash "$STOCK_MFG_HASH" \
+    || die "stock router returned an invalid MFG fingerprint; refusing to flash"
+  ok "captured the stock router identity"
+fi
+
 ONROUTER="$HERE/onrouter/$MODEL.sh"
 [ -f "$ONROUTER" ] || die "missing $ONROUTER"
-
-ensure_root_ssh
 
 say "uploading the factory image and the on-router script"
 run_must "uploading $(basename "$FACTORY_PATH")" \
@@ -338,6 +402,15 @@ else
     die "the unit may need UART recovery: docs/models/ and firmware/README.md"
   fi
   ok "initramfs is up"
+
+  INITRAMFS_MFG_HASH="$("${SSH_NEW[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" \
+    || die "could not fingerprint the OpenWrt initramfs; refusing to upload sysupgrade"
+  INITRAMFS_MFG_HASH="$(printf '%s' "$INITRAMFS_MFG_HASH" | tr -d '\r\n')"
+  valid_mfg_hash "$INITRAMFS_MFG_HASH" \
+    || die "OpenWrt initramfs returned an invalid MFG fingerprint"
+  [ "$INITRAMFS_MFG_HASH" = "$STOCK_MFG_HASH" ] \
+    || die "OpenWrt at $OPENWRT is a different router; refusing to upload sysupgrade"
+  ok "initramfs belongs to the validated router"
 fi
 
 say "uploading the permanent sysupgrade"
@@ -351,8 +424,31 @@ run_until_reboot "sysupgrade" "${SSH_NEW[@]}" 'sysupgrade -n /tmp/sysupgrade.bin
 
 printf '\n'
 if [ "$DRY_RUN" = 1 ]; then
+  say "would reconnect and verify persistent OpenWrt on the same router"
   warn "dry run: nothing was downloaded, written or flashed"
 else
-  ok "done. The unit reboots into OpenWrt at http://$OPENWRT — LuCI, root, no password."
-  printf '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md\n'
+  say "waiting for permanent OpenWrt on $OPENWRT (up to 3 minutes)"
+  permanent=0
+  for _ in $(seq 1 40); do
+    # If we briefly reconnect to the initramfs before it goes down, do not pin
+    # that host key for the next boot. The MFG hash is the continuity check.
+    : > "$FINAL_KNOWN_HOSTS"
+    FINAL_MFG_HASH="$("${SSH_FINAL[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" || {
+      sleep 5
+      continue
+    }
+    FINAL_MFG_HASH="$(printf '%s' "$FINAL_MFG_HASH" | tr -d '\r\n')"
+    if valid_mfg_hash "$FINAL_MFG_HASH"; then
+      [ "$FINAL_MFG_HASH" = "$STOCK_MFG_HASH" ] \
+        || die "OpenWrt at $OPENWRT is a different router after sysupgrade"
+      if "${SSH_FINAL[@]}" 'grep -Eq "^overlayfs:/overlay / overlay " /proc/mounts' 2>"$SSH_ERR"; then
+        permanent=1
+        break
+      fi
+    fi
+    sleep 5
+  done
+  [ "$permanent" = 1 ] \
+    || die "permanent OpenWrt did not come up on the validated router after sysupgrade"
+  ok "done. Permanent OpenWrt is up on the same router at http://$OPENWRT — LuCI, root, no password."
 fi

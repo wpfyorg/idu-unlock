@@ -1,132 +1,153 @@
-# Unlock a Jio IDU or Jio AirFiber router
+# Jio AirFiber IDU Unlock & JIDU OpenWrt
 
-Get a root shell over SSH, make it survive a reboot, and keep a complete image
-of the router's flash before you change anything.
+Unlock root SSH, back up the stock firmware, download verified images, and
+install OpenWrt on supported **Jio AirFiber IDU / JIDU AX6000 routers**.
 
-`idu-unlock` is for the **Jio IDU**, the indoor unit that Jio AirFiber uses as
-its router. It signs in with the admin password you set during setup, uses a
-command-injection bug in the stock firmware to run a short command as root, and
-then installs a startup script so SSH comes back on its own. It does not need a
-serial cable, a soldered header, or a factory firmware image.
+`idu-unlock` is a network-based Jio AirFiber IDU unlock and OpenWrt toolkit. It
+can identify the router, check firmware compatibility, enable persistent
+**Jio IDU root SSH**, save the factory data and flash partitions, and install
+**JIDU OpenWrt** on supported models without opening the router.
 
-It runs on macOS, Linux and Windows.
+`./flash.sh` is the main entry point. It can detect the router, check the
+firmware, unlock root SSH, make a backup, download the right OpenWrt images,
+or run the complete OpenWrt install:
+
+```bash
+./flash.sh detect
+./flash.sh check
+./flash.sh unlock
+./flash.sh backup
+./flash.sh download
+./flash.sh flash
+```
+
+`./flash.sh flash` detects the model, unlocks root SSH if needed, saves a stock
+backup, downloads and verifies the matching images, asks for a model
+confirmation, and then starts writing OpenWrt. JIDU6101 uses its own matching
+factory stage, so it follows the same two-stage flow as the other 6J01 models.
 
 > [!IMPORTANT]
-> **Please, for the love of humanity, stop turning this into a black market.**
-> I am tired. Let this be how somebody's dead e-waste gets a second life instead
-> of one more listing with a markup on a resale site.
->
-> We are irresponsible people. Do not hold us accountable — we are broke and we
-> have no lawyers. What you do with this is yours.
+> **Use the e-waste you already have at home.** This project exists to give an
+> unused Jio IDU a second life, not to create a buy/sell market around unlocked
+> routers. Please do not buy hardware just to flip it at a markup.
 
 > [!NOTE]
-> **The bug, written down.** The
+> **Want the technical disclosure?** For Jio, researchers, or anyone curious
+> about why the unlock works, the
 > [Jio AirFiber whitepaper](https://github.com/wpfyorg/jio-airfiber-whitepaper)
-> explains the `changeUserPassword` command injection in stock firmware, which
-> builds are affected, which build fixes it, and why any of this is public.
+> documents the stock `changeUserPassword` command injection, affected builds,
+> the fixed builds, and the reasoning behind publishing it.
 
 > [!WARNING]
 > Use this only on hardware you own or have explicit permission to modify.
 > Unlocking may void a warranty or breach your service terms, and replacing
 > firmware can brick the device. This project is provided without warranty.
 
-## What "unlock" means here
+The normal flow is:
 
-People use "unlock" for three different things with these routers. This project
-does one of them:
+```text
+Jio stock firmware
+        |
+        v
+Check compatibility
+        |
+        v
+Unlock root SSH
+        |
+        v
+Back up factory data + flash partitions
+        |
+        v
+Install OpenWrt (optional)
+```
 
-| What you might want | Does this project do it? |
-| --- | --- |
-| Use another SIM, or remove a carrier/network lock | No. It does not touch SIM, IMEI or operator settings. |
-| Recover or bypass a forgotten admin password | No. It signs in with the password you set during setup. |
-| Get a root shell over SSH and back up the router | Yes. |
+Everything runs over the network. For supported firmware, you do not need to
+open the router, solder anything, or connect a serial cable just to get root
+SSH and make a backup.
 
-If you are looking for a network unlock, this is not that tool.
+## What this project does
 
-## Supported routers
+`idu-unlock` can:
 
-| Family | Models | Unlock | Backup |
-| --- | --- | --- | --- |
-| MediaTek `6j01` | JIDU 6101 / 6201 / 6401 / 6601 / 6701 | Yes | After unlock |
-| Qualcomm `6j11` | JIDU 6111 / 6411 / 6611 / 6811 / 6911 | Yes | After unlock |
+- identify the JIDU model and hardware family;
+- check whether the stock firmware is likely to be unlockable;
+- enable persistent root SSH;
+- save factory credentials, bootloader data, and flash partitions;
+- download and verify the correct OpenWrt images;
+- automatically flash supported models over SSH.
 
-Each model has its own flashing page, with the exact files and notes for that
-unit: [JIDU model guides](docs/models/README.md). The 6j01 pages lead with
-SSH, then the official sysupgrade; the UART route is the fallback. The 6j11
-pages use the community build over SSH.
+It does **not** remove a SIM/network lock, change IMEI/operator settings, or
+bypass a forgotten router-admin password.
 
-Not sure which one you have? Detection changes nothing:
+## Supported models
+
+| Model | Family | Root SSH + backup | Automated OpenWrt install |
+| --- | --- | :---: | :---: |
+| JIDU6101 | MediaTek `6j01` | Yes | Yes |
+| JIDU6201 | MediaTek `6j01` | Yes | Yes |
+| JIDU6401 | MediaTek `6j01` | Yes | Yes |
+| JIDU6601 | MediaTek `6j01` | Yes | Yes |
+| JIDU6701 | MediaTek `6j01` | Yes | Yes |
+| JIDU6111 | Qualcomm `6j11` | Yes | Yes |
+| JIDU6411 | Qualcomm `6j11` | Yes | Yes |
+| JIDU6611 | Qualcomm `6j11` | Yes | Yes |
+| JIDU6811 | Qualcomm `6j11` | Yes | Yes |
+| JIDU6911 | Qualcomm `6j11` | Yes | Yes |
+
+Not sure which model you have?
 
 ```bash
 ./flash.sh detect
 ```
 
-On Windows, use `.\flash.ps1 detect`.
+Windows:
 
-## Firmware matters
+```powershell
+.\flash.ps1 detect
+```
 
-The tool uses one method: the `changeUserPassword` handler in the router's own
-web API. Two things decide whether it works: the handler must still hash the
-password through a shell (that is where `$(...)` runs), and the password-history
-feature must exist at all. Very old builds have neither, and newer builds have
-replaced the shell-out, so the vulnerable window is a range — not "everything
-older than X".
-
-| Family | Firmware | `check` | Why |
-| --- | --- | :---: | --- |
-| `6j01` MediaTek | `R2.0.18.x` and older | `NO` | no password-history shell-out; a stock 18.2 rootfs was checked |
-| `6j01` | `R2.0.19.0`–`R2.0.19.5` | `TEST` | the history feature landed somewhere in this window |
-| `6j01` | `R2.0.19.6`–`R3.2.0` | `YES` | the 19.6 rootfs carries the vulnerable hash; a 3.2.0 unit confirmed it |
-| `6j01` | `R3.2.1`–`R3.2.2` | `TEST` | the fix is somewhere between 3.2.0 and 3.2.3 |
-| `6j01` | `R3.2.3` and newer | `NO` | `luci.sys.user.setpasswd` replaced the shell-out |
-| `6j11` Qualcomm | `R3.2.6` and earlier | `YES` | member-confirmed at 3.2.6; older builds may predate the history feature, so the runtime probe decides |
-| `6j11` | `R3.2.7` and newer | `TEST` | no datapoint beyond 3.2.6 |
-
-`check` is a version hint, not a promise. Before it sends a payload, `unlock`
-changes the guest account's password once to a random value and looks for a new
-password-history entry. On the builds examined, a build that does not record
-history also has no vulnerable hash, so the tool stops with an explanation
-instead of waiting for a callback. The probe only touches the guest account —
-its password becomes a random value — and never the admin account. `--force`
-skips the version-based refusal if you want to try a hybrid build anyway; the
-runtime probe still runs, but warns instead of stopping when no history appears.
-
-`detect` is always read-only. `backup` needs root SSH. On a locked unit where
-`unlock` cannot work, there is no supported software-only backup; the UART/u-boot
-route is the fallback. If SSH is already enabled (for example through UART),
-`unlock` detects it and `backup` proceeds without the exploit.
-
-More detail: [docs/INTERNALS.md](docs/INTERNALS.md#firmware-compatibility).
+Per-model notes are in [docs/models](docs/models/README.md).
 
 ## Quick start
 
-macOS and Linux:
+You need the router admin password that was set during the normal Jio setup
+wizard. The router must already be set up; a factory-reset unit keeps the API
+locked until setup is completed.
+
+### macOS / Linux
 
 ```bash
 git clone https://github.com/wpfyorg/idu-unlock.git
 cd idu-unlock
-chmod +x flash.sh idu.py
+chmod +x flash.sh firmware/fwflash.sh
 
-./flash.sh check     # read-only: is this unit unlockable?
-./flash.sh backup    # unlock if needed, then back everything up
+./flash.sh check
+./flash.sh backup
+./flash.sh download     # optional: cache + verify the OpenWrt images
+# ./flash.sh flash      # destructive: backup, then install OpenWrt
 ```
 
-On Linux and macOS, `unlock` and `backup` listen on port 80, which is privileged.
-If the tool reports *permission denied*, run the command with `sudo`:
+`backup` checks the router, unlocks root SSH if needed, and then saves the
+backup in the current directory. `download` only caches verified firmware;
+`flash` performs the complete install after making a fresh backup on models
+with an automated SSH flash path.
+
+On macOS and Linux, unlocking uses a temporary HTTP callback on port 80. If the
+script says it cannot bind that port, run the command with `sudo`:
 
 ```bash
 sudo ./flash.sh backup
 ```
 
-On Linux you can instead allow unprivileged low ports for the current boot, which
-keeps the backup files owned by you:
+On Linux you can instead allow unprivileged programs to use low ports for the
+current boot:
 
 ```bash
 sudo sysctl net.ipv4.ip_unprivileged_port_start=80
 ./flash.sh backup
 ```
 
-Windows:
+### Windows
 
 ```powershell
 git clone https://github.com/wpfyorg/idu-unlock.git
@@ -137,130 +158,148 @@ ssh-keygen -t rsa -b 2048 -f $HOME\.ssh\idu_rsa
 .\flash.ps1 backup --key $HOME\.ssh\idu_rsa
 ```
 
-Windows has no `expect`, so pass a key to both `backup` and `unlock`: after the
-installer enables SSH, the tool verifies it with a scripted login. Without a key
-that check fails even when the unlock worked. Create the key once as shown, then
-reuse it.
+Windows needs an RSA key for the scripted SSH verification step. Create it once
+as shown above and reuse it for `unlock` and `backup`.
 
-The launcher creates a local Python environment and installs its dependencies on
-first run. Windows specifics: [docs/WINDOWS.md](docs/WINDOWS.md).
+Windows Firewall must allow Python to receive the router's callback. If Windows
+refuses port 80, run PowerShell as Administrator.
 
-## Commands
+WSL2's normal NAT setup cannot receive this callback reliably, so use
+`flash.ps1` from Windows instead of running `flash.sh` inside WSL2.
+
+More Windows notes: [docs/WINDOWS.md](docs/WINDOWS.md).
+
+## Main commands
 
 | Command | What it does | Changes the router? |
-| --- | --- | --- |
-| `./flash.sh detect` | Print the model and hardware family | No |
-| `./flash.sh check` | Check whether the firmware is still vulnerable | No |
+| --- | --- | :---: |
+| `./flash.sh detect` | Show model and hardware family | No |
+| `./flash.sh check` | Check firmware compatibility | No |
 | `./flash.sh unlock` | Enable persistent root SSH | Yes |
-| `./flash.sh backup` | Unlock if needed, then back up every partition | Yes |
-| `./flash.sh` | Unlock and back up (the default) | Yes |
+| `./flash.sh backup` | Unlock if needed, then save a device backup | Yes |
+| `./flash.sh download` | Detect the model, download and verify its OpenWrt images | No firmware writes |
+| `./flash.sh flash` | Detect, unlock, back up, download, verify, and install OpenWrt | Yes — destructive |
+| `./flash.sh` | Same as `backup` | Yes |
 
-Replace `./flash.sh` with `.\flash.ps1` on Windows.
+On Windows, `.\flash.ps1` handles detect/check/unlock/backup. OpenWrt download
+and flashing use `.\firmware\fwflash.ps1` directly.
 
-### Options
+Common options:
 
 ```text
---router URL       Router address
-                   default: https://192.168.31.1
-
---password PW      Router admin password
-                   prompted if omitted
-
---key PATH         SSH key to install. Optional: with no key, root is left
-                   passwordless and nothing of ours is installed on the router
-
---address IP       Local IPv4 the router should fetch the installer from.
-                   Use it when the automatic choice is wrong (VPN, multiple
-                   interfaces, or WSL's NAT)
-
---force            Send the payloads even when check reports NO. Advanced;
-                   the runtime history probe still runs
-
--v, --verbose      Show the detail behind each step
+--router URL       Router URL. Default: https://192.168.31.1
+--password PW      Router admin password. Prompted if omitted.
+--key PATH         Existing RSA private key to install for root SSH.
+--address IP       Local IPv4 address used for the router callback.
+--force            Try the unlock even when the version check says NO.
+-v, --verbose      Show more detail.
 ```
 
-No key is ever generated for you. If you pass `--key`, it must already exist. In
-PowerShell, single-dash forms (`-Router`, `-Password`, `-Key`, `-Address`,
-`-Force`) also work.
+The launchers create a local Python virtual environment and install the required
+Python packages on first run if needed.
 
-## Unlocking
+## Checking firmware compatibility
+
+Run:
+
+```bash
+./flash.sh check
+```
+
+The result is one of three states:
+
+- `YES` — this firmware is in a range known to work;
+- `TEST` — the exact build is not confirmed, so the unlocker will verify the
+  vulnerable behavior before sending the real payload;
+- `NO` — the known `changeUserPassword` route is closed on this build.
+
+Current compatibility knowledge:
+
+| Family | Firmware | Result |
+| --- | --- | :---: |
+| MediaTek `6j01` | `R2.0.18.x` and older | `NO` |
+| MediaTek `6j01` | `R2.0.19.0`–`R2.0.19.5` | `TEST` |
+| MediaTek `6j01` | `R2.0.19.6`–`R3.2.0` | `YES` |
+| MediaTek `6j01` | `R3.2.1`–`R3.2.2` | `TEST` |
+| MediaTek `6j01` | `R3.2.3` and newer | `NO` |
+| Qualcomm `6j11` | `R3.2.6` and earlier | `YES`* |
+| Qualcomm `6j11` | `R3.2.7` and newer | `TEST` |
+
+\* `6j11` has confirmed working units through `R3.2.6`. Very old releases may
+predate the password-history behavior, so the runtime probe is still the final
+check.
+
+The version table is only a first filter. During `unlock`, the tool makes one
+normal password change on the **guest account** and checks whether the expected
+password-history entry appears. If it does not, the script stops before sending
+the exploit payload. The admin account is not changed.
+
+`--force` skips the version-based refusal, but the runtime probe still runs and
+prints a warning if the expected behavior is missing.
+
+Technical details are in
+[docs/INTERNALS.md](docs/INTERNALS.md#firmware-compatibility).
+
+## Unlock root SSH
 
 ```bash
 ./flash.sh unlock
 ```
 
-On Linux or macOS, add `sudo` if port 80 is refused: `sudo ./flash.sh unlock`.
+The script logs into the router's web API, uses the vulnerable password-history
+code path to run a small installer as root, starts Dropbear on port 22, and adds
+a startup script so SSH returns after reboot.
 
-Typical output, with a key passed as `--key ~/.ssh/idu_rsa`:
+If you already have root SSH, the script detects it and does not try the exploit
+again.
 
-```text
-Router admin password:
+### SSH without a key
 
-[*] Connecting to 192.168.31.1
-[+] Device: JIDU6101 (Arcadyan / MTK)
-[+] Family: mediatek
-
-[*] Unlocking...
-[*] Callback: http://192.168.31.51:80/ (the router fetches the installer here)
-    targeting guest record 3
-    probing for password-history support ...
-    password-history shell-out present
-    Method 1/1: success
-
-[+] Root SSH enabled
-    ssh -i ~/.ssh/idu_rsa -o IdentitiesOnly=yes root@192.168.31.1
-[*] Router reported:
-    id: uid=0(root) gid=0(root)
-    key: 1 line(s)
-    persist: K01idu-ssh S99idu-ssh
-    sshd: 1
-[+] SSH persistence enabled
-```
-
-Without `--key`, the hint is `ssh root@192.168.31.1` and the password is empty,
-so you just press Enter.
-
-1. **Identify** the unit with `./flash.sh detect`. It changes nothing.
-2. **Back up first.** See [Backup](#backup).
-3. **Unlock** with `./flash.sh unlock`.
-4. **Connect** with the `ssh` command it prints. The startup script it installs
-   brings SSH back after a reboot.
-
-The router allows one admin session at a time. If you are logged in to its web
-page, expect to be logged out: the tool takes over the sitting session instead
-of waiting for it. About five wrong admin passwords in a row make it block
-logins for a while, so check the password rather than retrying.
-
-## SSH access
-
-With a key:
-
-```bash
-ssh -i ~/.ssh/idu_rsa -o IdentitiesOnly=yes root@192.168.31.1
-```
-
-Without one:
+If you do not pass `--key`, root SSH is left with an empty password:
 
 ```bash
 ssh root@192.168.31.1
 ```
 
-Use an RSA key if you install one. The stock Dropbear on these units rejects
-Ed25519.
+Press Enter when SSH asks for the password.
 
-Because the unlock starts Dropbear with `-R`, the router makes a new host key
-whenever sshd starts, so SSH will warn that the host key changed. That is
-expected on this hardware. [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-shows how to clear the old entry.
+### SSH with a key
 
-## Backup
+Create an RSA key first:
+
+```bash
+ssh-keygen -t rsa -b 2048 -f ~/.ssh/idu_rsa
+```
+
+Then unlock with it:
+
+```bash
+./flash.sh unlock --key ~/.ssh/idu_rsa
+```
+
+Connect with:
+
+```bash
+ssh -i ~/.ssh/idu_rsa -o IdentitiesOnly=yes root@192.168.31.1
+```
+
+The stock Dropbear build on these routers may reject Ed25519 keys, so RSA is the
+safe choice.
+
+The router can generate a new SSH host key when Dropbear restarts. If your SSH
+client reports a changed host key after a reboot, see
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## Make a backup
+
+Run this before flashing OpenWrt:
 
 ```bash
 ./flash.sh backup
 ```
 
-This unlocks the router if it has to, then writes a directory named after its
-Wi-Fi network:
+The wrapper unlocks the router first if necessary, then saves a directory named
+after the router's Wi-Fi network. A typical backup looks like this:
 
 ```text
 AirFiber-XXXXXX/
@@ -275,190 +314,196 @@ AirFiber-XXXXXX/
     └── ...
 ```
 
-If `check` reports `NO` on a locked unit, there is no supported software-only
-backup: reading the flash needs root SSH, and this tool has no other network
-route. See [Firmware matters](#firmware-matters).
+The default backup skips `mtd0`, the full SPI-chip image. The lower-level Python
+command supports `--full-chip` if you specifically need it.
 
 > [!IMPORTANT]
-> Treat the backup directory like a password or a private key. It holds the
-> factory passwords, the Wi-Fi PSK, the serial number and every partition.
-> **Do not upload it to GitHub or share it publicly.**
+> The backup contains sensitive device data: Wi-Fi passwords, factory
+> credentials, serial information, bootloader data, and raw flash partitions.
+> Keep it private. Do not upload it to GitHub or share it publicly.
 
-[docs/BACKUP.md](docs/BACKUP.md) covers what each file contains, the expected
-sizes, and how to restore a single partition.
+More detail: [docs/BACKUP.md](docs/BACKUP.md).
 
-## OpenWrt
+## Install OpenWrt
 
-`idu-unlock` does not write firmware. It gets the router to a safe starting
-point:
-
-```text
-Stock firmware
-      │
-      ▼
-Root SSH
-      │
-      ▼
-Full backup
-      │
-      ▼
-Ready for OpenWrt
-```
-
-Installation is documented separately:
-**[Installing OpenWrt](OPENWRT.md)**, which also has a
-[guide for each model](docs/models/README.md). Read it completely before
-flashing anything.
-
-For 6j01 and 6j11, one command downloads and verifies the images, unlocks the
-unit if root SSH is not already available, then flashes:
+On macOS/Linux, the normal path is one command:
 
 ```bash
-./firmware/fwflash.sh 6j01     # JIDU6201 / 6401 / 6601 / 6701
-./firmware/fwflash.sh 6j11     # JIDU6111 / 6411 / 6611 / 6811 / 6911
+./flash.sh flash
 ```
 
-On Windows use:
+That command detects the model, enables root SSH if needed, creates the stock
+backup, downloads and verifies the correct images, then hands off to the
+firmware installer. If you only want the files, run `./flash.sh download`.
+
+Windows uses the lower-level firmware launcher directly:
 
 ```powershell
-$env:KEY = "$HOME\.ssh\idu_rsa" # set this to your RSA key path
-.\firmware\fwflash.ps1 6j01
-.\firmware\fwflash.ps1 6j11
+# JIDU6101
+.\firmware\fwflash.ps1 6101 -Key $HOME\.ssh\idu_rsa
+# JIDU6201 / 6401 / 6601 / 6701
+.\firmware\fwflash.ps1 6j01 -Key $HOME\.ssh\idu_rsa
+# JIDU6111 / 6411 / 6611 / 6811 / 6911
+.\firmware\fwflash.ps1 6j11 -Key $HOME\.ssh\idu_rsa
 ```
 
-Images are cached in `firmware/downloads/<model>/`, checked against their
-manifest SHA-256 on every run, and reused when valid. The flasher shows the
-model and image plan and asks you to type the model before it contacts or
-unlocks the router. Bash `--yes` and PowerShell `-Yes` skip that confirmation
-for manifest images. A custom image without its matching SHA-256
-(`--image`/`-Image` without `--image-sha256`/`-ImageSha256`) always requires the
-typed confirmation. If root SSH is unavailable, it invokes the existing
-unlocker and prompts for the router admin password.
-macOS/Linux requests `sudo` for that unlock step only, because it needs local
-port 80; the download cache and flashing commands remain under your account.
-On Windows, if unlocking is needed, provide an RSA key through `$env:KEY` or
-`~/.ssh/idu_rsa`. That same key is used for the unlock check, SSH, SCP and
-backup. If root SSH already works, the Windows key is not required for flashing.
+The lower-level `firmware/fwflash.*` tools still work directly on every
+platform. They check root SSH and run the repo unlocker automatically if the
+stock unit is still locked.
 
-Back up first — on macOS/Linux run `./flash.sh backup`; on Windows run
-`.\flash.ps1 backup --key $env:KEY` (see the Windows guide for key setup).
-Flashing is not reversible over the network. The 6101 has no SSH flasher: use
-its UART + TFTP route; `./firmware/fwflash.sh 6101 --download-only` or
-`.\firmware\fwflash.ps1 6101 -DownloadOnly` only downloads and verifies its
-images. Download-only and dry-run do not unlock or flash (`--download-only` /
-`--dry-run` on Bash; `-DownloadOnly` / `-DryRun` on PowerShell). See
-[firmware/README.md](firmware/README.md) for the full flag list and
-image-provenance details.
+Before anything is written, the flasher shows the model and image names and asks
+you to type the model name as confirmation.
 
-The `6j01` models use the SSH shortcut first, then the official 25.12.6
-sysupgrade; the UART route installs the same official image without the
-community stage 1. The 6101 forces its `jidu6101` image with `-F`; the other
-four match `jidu6j01` and do not need it. All five `6j11` models use the Mayank
-SSH method and the
-[JIO-AX6000-6J11 community builds](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH);
-UART is recovery only. There is no SSH flasher for the 6101 — its documented
-route is UART + TFTP — but `fwflash` will still download and verify its images.
+JIDU6101 uses a JIDU6101-specific 25.12.6 factory stage followed by the
+official JIDU6101 sysupgrade. Both stages identify as
+`jiorouter_ax6000-jidu6101`, so normal `sysupgrade -n` works without `-F`.
+The factory stage contains the same fixed 25.12.6 initramfs payload as the
+official image, including the September 2026 SPI-NAND pinctrl fix.
 
-## Questions people ask
+### Useful firmware options
 
-**Is this a SIM unlock?**
-No. It does not change SIM, IMEI or operator settings. See
-[What "unlock" means here](#what-unlock-means-here).
+```text
+--download-only       Download and verify images, then stop.
+--dry-run             Show what would happen without downloading or flashing.
+--cache DIR           Store downloaded images somewhere else.
+--image PATH          Use a local sysupgrade image.
+--image-sha256 HASH   Verify a local image against a hash you provide.
+--smallbuffers        6J11 only: use the reduced-buffer sysupgrade build.
+--yes                 Skip the typed model confirmation.
+-v, --verbose         Show more detail.
+```
 
-**Does it work on a JioFiber ONT?**
-This covers the IDU models in the table above. Other Jio hardware, including
-JioFiber ONTs and the JODU outdoor units, is not supported.
+Downloaded files are cached under `firmware/downloads/<model>/`. Every cached
+file is checked against the SHA-256 in `firmware/manifest.json` before use. A
+bad or partial download is refused.
 
-**Do I need the admin password?**
-Yes. This is not a password recovery tool. If you do not have it, reset the unit
-and finish the setup wizard in its web interface; the wizard sets a new one.
+The automated flash flow is:
 
-**Do I need to open the router or use a serial cable?**
-No, as long as the firmware is in the vulnerable range. Everything runs over the
-network, against the router's own web API. On a build where that handler is
-fixed, this tool's network route is closed and the UART/u-boot console is its
-fallback.
+1. Pick the images from `firmware/manifest.json`.
+2. Download anything missing and verify SHA-256.
+3. Check root SSH, unlocking the stock firmware if needed.
+4. Upload the factory image and the matching on-router flashing script.
+5. Write the idle UBI slot and reboot into OpenWrt initramfs.
+6. Wait for OpenWrt at `192.168.1.1`.
+7. Upload the sysupgrade image and run `sysupgrade -n`.
 
-**Does it survive a reboot?**
-Yes. The unlock installs a startup script ordered after the vendor's, so SSH
-starts even though the vendor's own script disables it on every boot.
+After a successful install, OpenWrt comes up at:
 
-**Will my Wi-Fi name or password change?**
-No. The tool does not touch your wireless settings.
+```text
+http://192.168.1.1
+```
 
-**Can I install OpenWrt with it?**
-This repository stops at root and backup. Firmware installation is documented in
-[OPENWRT.md](OPENWRT.md), and it is irreversible.
+The fresh image uses the normal OpenWrt initial state: root account with no
+password until you set one.
 
-**Is it legal?**
-That depends on where you live and on what you agreed to when the router was
-installed. See [Legal](#legal). Use it on hardware you own.
+Read [firmware/README.md](firmware/README.md) for image provenance, cache
+behavior, and recovery notes. The longer manual guide is in
+[OPENWRT.md](OPENWRT.md).
+
+## Where the OpenWrt images come from
+
+The firmware manifest is the source of truth for filenames, download URLs,
+sizes, and SHA-256 hashes.
+
+- **6J01 / 6101 sysupgrade and initramfs:** official OpenWrt 25.12.6
+  `mediatek/filogic` builds.
+- **6J01 / 6101 factory UBI:** project-packaged UBI wrappers around the official
+  OpenWrt 25.12.6 initramfs payloads. The payloads include the JioRouter
+  SPI-NAND fix; filenames, sizes, and SHA-256 hashes are pinned in the manifest.
+- **6J11:** community builds from
+  [themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH).
+
+The project release mirrors the files used by the manifest so a moved upstream
+asset does not silently change what the script downloads.
 
 ## Requirements
 
-The router must be powered on, reachable, and fully set up: setup wizard
-completed and an admin password configured. A factory-reset unit keeps its web
-API locked until the wizard is finished.
+For unlock and backup:
 
-Your computer needs:
+- Python 3;
+- network access to the router;
+- an SSH client;
+- port 80 available on the computer running the unlock;
+- the router admin password.
 
-- **Python 3**. macOS: `xcode-select --install`. Linux: your package manager.
-  Windows: `winget install Python.Python.3.12` (tick *Add python.exe to PATH*).
-- An **SSH client**, and network access to the router.
-- **Port 80, free and reachable.** `unlock` serves the installer there and the
-  router fetches it. On Linux and macOS, binding it needs root; Linux can
-  instead lower the privileged-port floor (see [Quick start](#quick-start)). On
-  Windows, allow Python through the firewall. WSL2's default NAT cannot receive
-  the callback; use `flash.ps1`.
-- **Linux only:** `expect` (`sudo apt install expect`). macOS includes it. It is
-  what drives password-based SSH; without it, pass `--key`.
+macOS/Linux password-based SSH automation uses `expect`. If it is missing,
+install it with your package manager or use an SSH key. Windows should use an
+RSA key because `expect` is not available there.
+
+For OpenWrt flashing, the shell script also needs standard tools such as `ssh`,
+`scp`, `curl` or `wget`, and `sha256sum` or `shasum`.
+
+## Common problems
+
+**The router cannot be detected**
+
+Make sure you can open `https://192.168.31.1`, finish the setup wizard, and use
+the correct admin password. The router allows only one admin session at a time,
+so log out of the web UI before running the tool if needed.
+
+**I entered the wrong password several times**
+
+The stock firmware can temporarily block logins after roughly five failed
+attempts. Stop retrying and wait for the lockout to clear.
+
+**The router never calls back during unlock**
+
+A firewall, VPN, multiple network interfaces, or the wrong source address can
+block the callback. Use `--address <your-LAN-IP>` when automatic detection picks
+the wrong interface.
+
+**Port 80 is already in use**
+
+Stop the program using it, or use the platform-specific advice in the Quick
+start section.
+
+**`check` says `NO`**
+
+The known network exploit is closed on that firmware. If the unit already has
+root SSH from another route, backup still works. Otherwise use the UART/u-boot
+route documented for the model.
+
+More fixes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Project layout
 
 ```text
-README.md            this file
-OPENWRT.md           OpenWrt installation guide
+README.md                  this guide
+flash.sh                   macOS / Linux unlock + backup launcher
+flash.ps1                  Windows unlock + backup launcher
+idu.py                     core unlock, compatibility, SSH, and backup engine
+OPENWRT.md                 detailed/manual OpenWrt guide
+
 docs/
-  BACKUP.md          what a backup contains
-  INTERNALS.md       how the unlock works
-  TROUBLESHOOTING.md problems and fixes
-  WINDOWS.md         Windows specifics
-flash.sh             macOS / Linux launcher
-flash.ps1            Windows PowerShell launcher
-idu.py               core engine used by both launchers
+  BACKUP.md                backup contents and restore notes
+  INTERNALS.md             exploit and compatibility internals
+  TROUBLESHOOTING.md       common failures and fixes
+  WINDOWS.md               Windows-specific setup
+  models/                  per-model OpenWrt notes
+
 firmware/
-  fwflash.sh         download + flash OpenWrt (macOS / Linux)
-  fwflash.ps1        download + flash OpenWrt (Windows)
-  manifest.json      which image for which model, with sha256 and URL
-  onrouter/          scripts uploaded to the stock unit and run there
-  downloads/         image cache, git-ignored
-requirements.txt     Python dependencies
-tests/               tests
+  fwflash.sh               macOS / Linux OpenWrt installer
+  fwflash.ps1              Windows OpenWrt installer
+  manifest.json            image metadata, URLs, sizes, SHA-256
+  onrouter/                scripts run on the stock router during flashing
+  downloads/               verified image cache (git-ignored)
+
+requirements.txt           Python dependencies
+tests/                     automated tests
 ```
 
-## Glossary
+## Safety notes
 
-| Term | Meaning |
-| --- | --- |
-| **SSH** | Secure remote terminal, how you log in to and control the router from your computer. |
-| **root** | The all-powerful administrator account on a Linux system. |
-| **Firmware** | The operating system stored inside the router. |
-| **Partition** | A named section of the flash chip. The MFG partition holds factory passwords. |
-| **u-boot** | The small bootloader that starts the router before the main system loads. |
-| **UART** | A serial port on the circuit board, used when software access is not enough. |
-| **`/WCGI`** | The router's internal web API, what its admin page talks to. |
+A few rules are worth following every time:
 
-## Safety
+1. Run `./flash.sh check` before relying on the network unlock.
+2. Run `./flash.sh backup` before flashing.
+3. Keep the backup somewhere private and off the router.
+4. Do not interrupt power while flash is being written.
+5. Keep the per-model UART recovery guide available before installing OpenWrt.
 
-Before doing anything beyond unlocking:
-
-```bash
-./flash.sh backup
-```
-
-Keep that backup somewhere safe. If you plan to install OpenWrt, the original
-partitions matter. They hold device-specific factory data that cannot always be
-recreated later, and they are the only way back if a flash goes wrong.
+If the stock network route is unavailable or a flash fails, UART/TFTP may be the
+only recovery path.
 
 ## Legal
 
@@ -470,78 +515,27 @@ not responsible for hardware damage, data loss, service interruption, warranty
 loss, contractual issues, or other consequences resulting from its use.
 
 The project is independent and is not affiliated with or endorsed by Jio,
-Skyworth, router manufacturers, carriers, or other vendors mentioned here.
-
-Product and company names are used only for identification.
-
-<details>
-<summary>Full disclaimer</summary>
-
-> - This software is provided **"as is", without warranty of any kind**, express
->   or implied. It may fail, behave unexpectedly, or leave your device in a
->   state you did not want.
-> - **You use it entirely at your own risk, and on your own responsibility.**
->   To the fullest extent permitted by law, the authors and contributors accept
->   no liability for any damage, data loss, device failure, service
->   interruption, legal consequence, or breach of any agreement arising from
->   this project or its use.
-> - **Compliance is your job.** Make sure what you do is lawful where you live
->   and allowed by any agreement that applies to you. These units are normally
->   carrier-supplied, and changing one can breach your service terms or void a
->   warranty.
-> - **Only use it on hardware you own**, or hardware you have explicit written
->   permission to test. Using it against equipment you do not own or control may
->   be unlawful.
-> - **No vendor code, no secrets, no infringement.** This is an independent,
->   clean-room security research project, built only from the publicly
->   observable behaviour of hardware the author owns. It contains no
->   manufacturer's or carrier's code, firmware, documentation, or confidential
->   information, and it is not derived from any of them.
-> - **No affiliation.** This project is not connected to, endorsed by, or
->   supported by any manufacturer, carrier, or vendor.
-> - **Rights-holder requests are welcome.** If you hold rights in something you
->   believe this project touches, say so via this repository's issues and it
->   will be dealt with promptly, including removal of anything that should not
->   be here.
-> - **No support, and no promised outcome.** It is shared for security research
->   and personal use.
->
-> By downloading, running, or otherwise using any part of this project, you
-> accept these terms. If you do not accept them, do not use it.
-
-</details>
+router manufacturers, carriers, OpenWrt, or other vendors mentioned here.
 
 ## License
 
 Licensed under **PolyForm Noncommercial 1.0.0** with the project's attribution
-requirements.
+requirements. Commercial use is not granted.
 
-Commercial use is not granted. You may use, modify, and share this project for
-noncommercial purposes, but not sell it, resell it, or ship it inside a
-commercial product or service. If you publish a video, stream, or tutorial
-featuring this project, credit it and link back to this repository.
-
-See [LICENSE](LICENSE) for the complete terms. That makes this project
-*source-available*, not open source in the OSI sense.
+See [LICENSE](LICENSE) for the complete terms.
 
 ## Credits
 
 The router research and tooling in this repository are implemented
 independently.
 
-Thanks to **AK Sharma**, who found and fixed two `/WCGI` authentication quirks
-that stall a run: the session cookie is set with a `path` that is not a legal
-cookie path, so `requests` throws it away, and a sitting admin session never
-expires on a `6j11` unit, so waiting for it cannot work. Both fixes are in
-`idu.py`, and they came out of rooting a JIDU6611.
+Thanks to **AK Sharma** for identifying and fixing two `/WCGI` authentication
+quirks while working on a JIDU6611: an invalid cookie path that caused Python
+`requests` to discard the session cookie, and a persistent admin session that
+could block a new login.
 
-The 6j01/6j11 flashing method has a community-reported source chain: Cyborg
-shared it in the GeekyTwins server; it was relayed through WikiForce Admin on Discord and
-Sandip, then documented publicly by DIY Daddy. We have not independently
-verified every handoff, so this is attribution by reported provenance, not a
-claim of direct authorship. DIY Daddy's repository is credited as a public
-reference; it is not presented as the method's origin. The separate 6j11 SSH
-route and firmware builds are credited to
-**[themayankraut/JIO-AX6000-6J11-OpenWRT-SSH](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH)**.
+Thanks to **Cyborg**, [**DIY Daddy**](https://github.com/the-diy-daddy/6j01_6j11),
+and [**Mayank Raut**](https://github.com/themayankraut/JIO-AX6000-6J11-OpenWRT-SSH)
+for sharing their Jio router flashing work and resources.
 
 If this project helped you, consider starring the repository.

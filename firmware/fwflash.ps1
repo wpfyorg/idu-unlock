@@ -6,10 +6,11 @@ fwflash.ps1 - fetch and flash an OpenWrt image for a JIDU router, on Windows.
   .\fwflash.ps1 6j11                 unlock if needed, then flash a JIDU6J11
   .\fwflash.ps1 6j11 -Smallbuffers   ...using the reduced-buffer sysupgrade build
   .\fwflash.ps1 6j01 -DownloadOnly   cache the images, flash nothing
-  .\fwflash.ps1 6101                 downloads only: no SSH flasher for 6101
+  .\fwflash.ps1 6101                 unlock if needed, then flash a JIDU6101
 
 Options:
   -Router HOST     stock unit address (default 192.168.31.1)
+  -Key PATH        RSA private key used for stock root SSH and automatic unlock
   -Cache DIR       where images are kept (default .\downloads, next to this script)
   -Image PATH      use a local sysupgrade file instead of downloading one
   -ImageSha256 HEX the sha256 of -Image; without it you must still confirm
@@ -38,6 +39,7 @@ param(
     [string]$Model,
 
     [string]$Router = '192.168.31.1',
+    [string]$Key,
     [string]$Cache,
     [string]$Image,
     [string]$ImageSha256,
@@ -62,12 +64,13 @@ function Bad  ($m) { Write-Host "[-] $m" -ForegroundColor Red }
 function Die  ($m) { Bad $m; exit 1 }
 
 if ($Help -or -not $Model) {
-    Get-Content $PSCommandPath | Select-Object -Skip 1 -First 27 |
+    Get-Content $PSCommandPath | Select-Object -Skip 1 -First 28 |
         ForEach-Object { $_ -replace '^# ?', '' }
     exit ([int](-not $Model))
 }
 
 if (-not $Cache) { $Cache = Join-Path $Here 'downloads' }
+if (-not $Key -and $env:KEY) { $Key = $env:KEY }
 
 if (-not (Test-Path $Manifest)) { Die "missing $Manifest" }
 $Data = Get-Content $Manifest -Raw | ConvertFrom-Json
@@ -162,7 +165,7 @@ if ($DownloadOnly) {
 if (-not $Spec.flasher) {
     Warn "there is no SSH flasher for $Model`: the documented route is UART + TFTP"
     Warn "images are cached in $Dest; see docs/models/ for the install route"
-    exit 0
+    exit 2
 }
 
 Write-Host ''
@@ -181,51 +184,50 @@ if (-not $Yes -and -not $DryRun) {
 $onrouter = Join-Path (Join-Path $Here 'onrouter') "$Model.sh"
 if (-not (Test-Path $onrouter)) { Die "missing $onrouter" }
 
-$keyPath = $env:KEY
-if (-not $keyPath) {
-    $defaultKey = Join-Path $HOME '.ssh/idu_rsa'
-    if (Test-Path $defaultKey) { $keyPath = $defaultKey }
-}
-$stockKh = $null
-$stockOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
-$scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
-if (-not $DryRun) {
-    $stockKh = [System.IO.Path]::GetTempFileName()
-    $stockOpts += @('-o', "UserKnownHostsFile=$stockKh")
-    $scpOpts += @('-o', "UserKnownHostsFile=$stockKh")
-}
-if ($keyPath) {
-    $stockOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
-    $scpOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
-}
-
 # OpenWrt on 192.168.1.1 has just booted a fresh initramfs: it makes a new host
 # key every time, and that address may already be in known_hosts from another
-# unit. Give it a throwaway known_hosts file so a stale key cannot block it.
+# unit. Stock units commonly reuse 192.168.31.1 too. Give both sides throwaway
+# known_hosts files so stale keys from other routers cannot block this run.
+$stockKh = $null
 $owrtKh = $null
+$finalKh = $null
 $sshErr = $null
+$stockOpts = @('-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10')
+$scpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new')
 $owrtOpts = @()
+$finalOpts = @()
 if (-not $DryRun) {
+    $stockKh = [System.IO.Path]::GetTempFileName()
     $owrtKh = [System.IO.Path]::GetTempFileName()
+    $finalKh = [System.IO.Path]::GetTempFileName()
     $sshErr = [System.IO.Path]::GetTempFileName()
+    $stockOpts += @('-o', "UserKnownHostsFile=$stockKh")
+    $scpOpts += @('-o', "UserKnownHostsFile=$stockKh")
     $owrtOpts = @('-o', 'StrictHostKeyChecking=accept-new',
                   '-o', "UserKnownHostsFile=$owrtKh",
                   '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=5')
+    $finalOpts = @('-o', 'StrictHostKeyChecking=accept-new',
+                   '-o', "UserKnownHostsFile=$finalKh",
+                   '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=5')
+}
+$stockIdentity = @()
+if ($Key) {
+    if (-not (Test-Path $Key)) { Die "no SSH key at $Key" }
+    $stockIdentity = @('-i', $Key, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes')
+    $stockOpts += $stockIdentity
+    $scpOpts += $stockIdentity
 }
 $owrtScpOpts = @('-O', '-o', 'StrictHostKeyChecking=accept-new',
                  '-o', "UserKnownHostsFile=$owrtKh",
                  '-o', 'LogLevel=ERROR')
-if ($keyPath) {
-    $owrtOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
-    $owrtScpOpts += @('-i', $keyPath, '-o', 'IdentitiesOnly=yes')
-}
+$mfgIdentityCommand = 'd=$(grep -i mfg /proc/mtd | head -n1 | cut -d: -f1); [ -n "$d" ] || exit 2; command -v sha256sum >/dev/null || exit 3; h=$(sha256sum "/dev/$d") || exit 4; printf "%s\n" "${h%% *}"'
 
 # Native commands write to stderr as they go, and Windows PowerShell 5.1 turns a
 # native stderr line into a terminating error while $ErrorActionPreference is
-# Stop. Every ssh and scp call goes through these three helpers: they relax the
-# preference for the duration, send output to the console rather than the
-# pipeline, and return nothing but the exit code - so a caller comparing $rc
-# always compares a number, not an array of output lines plus a number.
+# Stop. It also strips embedded quotes from native command arguments. Send every
+# remote shell command on stdin to `sh -s` so the router receives the command
+# text intact. These helpers also keep native output out of the caller's status
+# variable and return only the exit code where appropriate.
 function Invoke-Ssh ($Options, $Target, $Command) {
     if ($DryRun) {
         $shown = if ($Options) { ($Options -join ' ') + ' ' } else { '' }
@@ -235,7 +237,11 @@ function Invoke-Ssh ($Options, $Target, $Command) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & ssh @Options $Target $Command | Out-Host
+        # Windows PowerShell 5.1 terminates native-pipeline strings with CRLF.
+        # End the actual command with an explicit LF, then leave the automatic
+        # CRLF on a harmless comment line so the router never sees a trailing CR.
+        $payload = $Command + "`n#"
+        $payload | & ssh @Options $Target 'sh -s' | Out-Host
         return $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }
@@ -245,10 +251,35 @@ function Test-Ssh ($Options, $Target, $ErrorFile, $Command = 'true') {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & ssh @Options $Target $Command 2>$ErrorFile | Out-Null
+        $payload = $Command + "`n#"
+        $payload | & ssh @Options $Target 'sh -s' 2>$ErrorFile | Out-Null
         return $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }
+}
+
+function Read-SshText ($Options, $Target, $ErrorFile, $Command) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $payload = $Command + "`n#"
+        $output = $payload | & ssh @Options $Target 'sh -s' 2>$ErrorFile
+        $rc = $LASTEXITCODE
+        return [pscustomobject]@{ ExitCode = $rc; Text = ($output -join "`n") }
+    }
+    finally { $ErrorActionPreference = $previous }
+}
+
+function Read-MfgIdentity ($Options, $Target, $ErrorFile) {
+    $probe = Read-SshText $Options $Target $ErrorFile $mfgIdentityCommand
+    if ($probe.ExitCode -ne 0) {
+        Die "could not fingerprint $Target from its MFG partition"
+    }
+    $hash = ([string]$probe.Text).Trim().ToLowerInvariant()
+    if ($hash -notmatch '^[0-9a-f]{64}$') {
+        Die "$Target returned an invalid MFG fingerprint"
+    }
+    return $hash
 }
 
 function Invoke-Scp ($Options, $Source, $Destination) {
@@ -273,24 +304,49 @@ try {
             Warn 'no root SSH yet: unlocking the unit now (it asks for the admin password)'
             $unlocker = Join-Path (Split-Path $Here -Parent) 'flash.ps1'
             if (-not (Test-Path $unlocker)) { Die "this unit is locked and $unlocker is missing" }
+            if (-not $Key) {
+                Die 'automatic unlock on Windows needs an RSA key; pass -Key $HOME\.ssh\idu_rsa'
+            }
             # A separate process: flash.ps1 calls exit, which would end this
             # script too if it were dot-sourced or invoked with &.
-            if ($env:OS -eq 'Windows_NT' -and -not $keyPath) {
-                Die 'Windows unlock needs an RSA SSH key: set $env:KEY to its path, then rerun; no new flasher option is required'
-            }
             $hostExe = (Get-Process -Id $PID).Path
-            $previousKey = $env:KEY
-            try {
-                if ($keyPath) { $env:KEY = $keyPath }
-                & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router"
-                if ($LASTEXITCODE -ne 0) { Die 'the unlock failed; nothing was flashed' }
-            }
-            finally { $env:KEY = $previousKey }
+            & $hostExe -NoProfile -File $unlocker unlock --router "https://$Router" --key $Key
+            if ($LASTEXITCODE -ne 0) { Die 'the unlock failed; nothing was flashed' }
             if ((Test-Ssh $stockOpts "root@$Router" $sshErr 'cat /proc/mtd >/dev/null') -ne 0) {
                 Die 'the unit unlocked, but root SSH still does not answer'
             }
         }
         Ok 'root SSH is live'
+    }
+
+    if ($DryRun) {
+        Say "would verify the connected hardware model against $Model"
+    }
+    else {
+        Say 'checking connected hardware model'
+        $probe = Read-SshText $stockOpts "root@$Router" $sshErr 'cat /tmp/deviceModel 2>/dev/null'
+        if ($probe.ExitCode -ne 0) {
+            Die 'could not read /tmp/deviceModel; refusing to flash an unknown router'
+        }
+        $connected = ([string]$probe.Text).Trim()
+        if (-not $connected) {
+            Die 'could not read /tmp/deviceModel; refusing to flash an unknown router'
+        }
+        $aliases = @($Spec.aliases | ForEach-Object { [string]$_ })
+        if ($aliases -notcontains $connected) {
+            Die "connected router is $connected, but the selected image set is $Model"
+        }
+        Ok "connected hardware is $connected"
+    }
+
+    if ($DryRun) {
+        Say "would fingerprint the stock router's MFG partition"
+        $stockMfgHash = 'dry-run'
+    }
+    else {
+        Say 'fingerprinting the stock router'
+        $stockMfgHash = Read-MfgIdentity $stockOpts "root@$Router" $sshErr
+        Ok 'captured the stock router identity'
     }
 
     Say 'uploading the factory image and the on-router script'
@@ -333,6 +389,12 @@ try {
             Die 'the unit may need UART recovery: docs/models/ and firmware/README.md'
         }
         Ok 'initramfs is up'
+
+        $initramfsMfgHash = Read-MfgIdentity $owrtOpts "root@$OpenWrt" $sshErr
+        if ($initramfsMfgHash -ne $stockMfgHash) {
+            Die "OpenWrt at $OpenWrt is a different router; refusing to upload sysupgrade"
+        }
+        Ok 'initramfs belongs to the validated router'
     }
 
     Say 'uploading the permanent sysupgrade'
@@ -352,15 +414,39 @@ try {
 
     Write-Host ''
     if ($DryRun) {
+        Say 'would reconnect and verify persistent OpenWrt on the same router'
         Warn 'dry run: nothing was downloaded, written or flashed'
     }
     else {
-        Ok "done. The unit reboots into OpenWrt at http://$OpenWrt - LuCI, root, no password."
-        Write-Host '    If it does not come back, recovery is UART + TFTP: docs/models/ and firmware/README.md'
+        Say "waiting for permanent OpenWrt on $OpenWrt (up to 3 minutes)"
+        $permanent = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            # A reconnect can briefly hit the initramfs before its reboot. Do
+            # not pin that host key for the permanent system.
+            [System.IO.File]::WriteAllText($finalKh, '')
+            $probe = Read-SshText $finalOpts "root@$OpenWrt" $sshErr $mfgIdentityCommand
+            if ($probe.ExitCode -eq 0) {
+                $finalMfgHash = ([string]$probe.Text).Trim().ToLowerInvariant()
+                if ($finalMfgHash -match '^[0-9a-f]{64}$') {
+                    if ($finalMfgHash -ne $stockMfgHash) {
+                        Die "OpenWrt at $OpenWrt is a different router after sysupgrade"
+                    }
+                    if ((Test-Ssh $finalOpts "root@$OpenWrt" $sshErr 'grep -Eq ''^overlayfs:/overlay / overlay '' /proc/mounts') -eq 0) {
+                        $permanent = $true
+                        break
+                    }
+                }
+            }
+            Start-Sleep -Seconds 5
+        }
+        if (-not $permanent) {
+            Die 'permanent OpenWrt did not come up on the validated router after sysupgrade'
+        }
+        Ok "done. Permanent OpenWrt is up on the same router at http://$OpenWrt - LuCI, root, no password."
     }
 }
 finally {
-    foreach ($tmp in @($stockKh, $owrtKh, $sshErr)) {
+    foreach ($tmp in @($stockKh, $owrtKh, $finalKh, $sshErr)) {
         if ($tmp -and (Test-Path $tmp)) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
     }
 }
