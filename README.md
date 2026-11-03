@@ -26,6 +26,14 @@ backup, downloads and verifies the matching images, asks for a model
 confirmation, and then starts writing OpenWrt. JIDU6101 uses its own matching
 factory stage, so it follows the same two-stage flow as the other 6J01 models.
 
+## Demo
+
+[▶ Watch the full unlock + OpenWrt flash demo](docs/assets/idu-unlock-cli-demo.mp4)
+
+The demo shows the end-to-end CLI flow: compatibility check, root SSH unlock,
+persistent SSH setup, stock backup, verified OpenWrt image download, factory
+image flash, initramfs boot, and permanent sysupgrade.
+
 > [!IMPORTANT]
 > **Use the e-waste you already have at home.** This project exists to give an
 > unused Jio IDU a second life, not to create a buy/sell market around unlocked
