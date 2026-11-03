@@ -28,7 +28,7 @@ factory stage, so it follows the same two-stage flow as the other 6J01 models.
 
 ## Demo
 
-[▶ Watch the full unlock + OpenWrt flash demo](docs/assets/idu-unlock-cli-demo.mp4)
+https://github.com/user-attachments/assets/d5307969-7d5e-49d0-90a8-b3982f40ad6e
 
 The demo shows the end-to-end CLI flow: compatibility check, root SSH unlock,
 persistent SSH setup, stock backup, verified OpenWrt image download, factory
