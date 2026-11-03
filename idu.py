@@ -330,9 +330,10 @@ class Injector:
     def literal(self, length: int = 16) -> str:
         """A random password with no shell metacharacters, for the history probe."""
         alphabet = string.ascii_letters + string.digits
+        prefix = self.salt + "-"
         body = "".join(secrets.choice(alphabet)
-                       for _ in range(max(0, length - len(self.salt))))
-        return (self.salt + body)[:PASSWORD_MAX]
+                       for _ in range(max(0, length - len(prefix))))
+        return (prefix + body)[:PASSWORD_MAX]
 
 
 # --------------------------------------------------------------------------- #
