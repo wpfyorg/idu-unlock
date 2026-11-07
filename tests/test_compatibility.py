@@ -273,8 +273,26 @@ class InjectorTests(unittest.TestCase):
         self.assertTrue(any(c.islower() for c in password))
         self.assertTrue(any(c.isupper() for c in password))
         self.assertTrue(any(c.isdigit() for c in password))
-        self.assertIn("-", password)
-        self.assertTrue(all(c.isalnum() or c == "-" for c in password))
+        # JIDU6101 R3.2 rejects an all-alphanumeric password with
+        # ERR_WEB_USER_INVALID_PASSWORD, so the probe has to carry a symbol.
+        self.assertIn("!", password)
+        self.assertTrue(all(c.isalnum() or c == "!" for c in password))
+
+
+class ShellAuthTests(unittest.TestCase):
+    def test_empty_password_uses_dropbear_none_auth_without_expect(self):
+        """`passwd -d root` leaves dropbear accepting "none": no prompt, no expect."""
+        with mock.patch.object(idu, "require_tool"):
+            shell = idu.Shell("192.168.31.1", password="")
+        opts = shell._opts()
+        self.assertIn("PreferredAuthentications=none", opts)
+        self.assertIn("BatchMode=yes", opts)
+        self.assertNotIn("PreferredAuthentications=password", opts)
+        with (mock.patch.object(idu, "_expect") as expect,
+              mock.patch.object(idu.subprocess, "run") as run):
+            run.return_value = mock.Mock(returncode=0, stdout="uid=0(root)\n", stderr="")
+            self.assertEqual(shell.run("id"), "uid=0(root)\n")
+        expect.assert_not_called()
 
 
 class PasswordProbeTests(unittest.TestCase):
