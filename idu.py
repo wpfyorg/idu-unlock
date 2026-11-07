@@ -78,7 +78,7 @@ VERBOSE = False
 BANNER = True
 
 MEDIATEK = {"JIDU6101", "JIDU6201", "JIDU6401", "JIDU6601", "JIDU6701"}
-QUALCOMM = {"JIDU6111", "JIDU6411", "JIDU6611", "JIDU6811", "JIDU6911"}
+QUALCOMM = {"JIDU6111", "JIDU6411", "JIDU6611", "JIDU6711", "JIDU6811", "JIDU6911"}
 
 
 class IduError(RuntimeError):
@@ -335,9 +335,10 @@ class Injector:
         ERR_WEB_USER_INVALID_PASSWORD, so one special character is mandatory.
         """
         alphabet = string.ascii_letters + string.digits
+        prefix = self.salt + "!"
         body = "".join(secrets.choice(alphabet)
-                       for _ in range(max(0, length - len(self.salt) - 1)))
-        return (self.salt + "!" + body)[:PASSWORD_MAX]
+                       for _ in range(max(0, length - len(prefix))))
+        return (prefix + body)[:PASSWORD_MAX]
 
 
 # --------------------------------------------------------------------------- #
@@ -892,6 +893,10 @@ def check(api: Api) -> Verdict:
             f"release > {label} on {family or 'unknown'} boards: test the API "
             "with unlock")
         test_required = True
+
+    if model == "JIDU6711" and vectors:
+        test_required = True
+        evidence.append("JIDU6711 family and unlock compatibility need device verification")
 
     return Verdict(model=model, firmware=version, vectors=vectors,
                    evidence=evidence, test_required=test_required,
