@@ -299,13 +299,18 @@ run_must() {  # must exit 0
   if ! "$@"; then bad "$what failed"; return 1; fi
 }
 
-run_until_reboot() {  # 0 or 255: the unit drops the connection as it reboots
+run_until_reboot() {  # 0, 255 or 246: the unit drops the connection as it reboots
   local what="$1"; shift
   if [ "$DRY_RUN" = 1 ]; then printf '    would run: %s\n' "$*"; return 0; fi
   local rc=0
   "$@" || rc=$?
   case "$rc" in
     0|255) return 0 ;;
+    # sysupgrade exits 246 when `ubus call system sysupgrade` loses the daemon
+    # as the upgrade takes over ("Commencing upgrade" is already printed). The
+    # overlayfs check after the reboot is what decides success, so this is not
+    # a refusal. An image the unit actually rejects exits 1 and still fails.
+    246) return 0 ;;
     *) bad "$what failed (exit $rc)"; return 1 ;;
   esac
 }

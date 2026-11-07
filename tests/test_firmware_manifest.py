@@ -476,7 +476,7 @@ class FlashScriptTest(unittest.TestCase):
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
                 "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
                 "  'true') exit 0 ;;\n"
-                "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
+                "  'sysupgrade -n /tmp/sysupgrade.bin') exit ${SYSUPGRADE_RC:-255} ;;\n"
                 "  *overlayfs:/overlay*)\n"
                 "    payload=${payload//\\/proc\\/mounts/$MOUNTS_FIXTURE}\n"
                 "    bash -c \"$payload\"\n"
@@ -526,6 +526,21 @@ class FlashScriptTest(unittest.TestCase):
             self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
             self.assertIn("Permanent OpenWrt is up on the same router", passed.stdout)
 
+            # JIDU6101: sysupgrade hands off to ubus and exits 246 when the
+            # daemon drops the connection mid-upgrade. That is the reboot, not
+            # a refused image, so the run must still reach the overlay check.
+            env["SYSUPGRADE_RC"] = "246"
+            ubus = subprocess.run(
+                ["bash", str(flasher), "6101", "--cache", str(cache), "--yes"],
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=root,
+            )
+            self.assertEqual(ubus.returncode, 0, ubus.stdout + ubus.stderr)
+            self.assertNotIn("sysupgrade refused the image", ubus.stdout + ubus.stderr)
+            self.assertIn("Permanent OpenWrt is up on the same router", ubus.stdout)
+
     def test_powershell_flasher_requires_persistent_overlay_after_sysupgrade_disconnect(self):
         powershell = self._powershell_for_bash_stub_tests()
 
@@ -548,7 +563,7 @@ class FlashScriptTest(unittest.TestCase):
                 "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
                 "  'sh /tmp/jidu-flash.sh') exit 255 ;;\n"
                 "  'true') exit 0 ;;\n"
-                "  'sysupgrade -n /tmp/sysupgrade.bin') exit 255 ;;\n"
+                "  'sysupgrade -n /tmp/sysupgrade.bin') exit ${SYSUPGRADE_RC:-255} ;;\n"
                 "  *overlayfs:/overlay*)\n"
                 "    payload=${payload//\\/proc\\/mounts/$MOUNTS_FIXTURE}\n"
                 "    bash -c \"$payload\"\n"
