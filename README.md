@@ -81,6 +81,8 @@ SSH and make a backup.
 - check whether the stock firmware is likely to be unlockable;
 - enable persistent root SSH;
 - save factory credentials, bootloader data, and flash partitions;
+- rebuild an early build's web-UI configuration backup with root SSH when the
+  API route is closed;
 - download and verify the correct OpenWrt images;
 - automatically flash supported models over SSH.
 
@@ -189,6 +191,7 @@ More Windows notes: [docs/WINDOWS.md](docs/WINDOWS.md).
 | `./flash.sh download` | Detect the model, download and verify its OpenWrt images | No firmware writes |
 | `./flash.sh flash` | Detect, unlock, back up, download, verify, and install OpenWrt | Yes — destructive |
 | `./flash.sh` | Same as `backup` | Yes |
+| `./flash.sh breeze FILE` | Offline: rebuild a web-UI config backup with root SSH | File only |
 
 On Windows, `.\flash.ps1` handles detect/check/unlock/backup. OpenWrt download
 and flashing use `.\firmware\fwflash.ps1` directly.
@@ -198,9 +201,13 @@ Common options:
 ```text
 --router URL       Router URL. Default: https://192.168.31.1
 --password PW      Router admin password. Prompted if omitted.
---key PATH         Existing RSA private key to install for root SSH.
+--key PATH         Existing RSA private key to install for root SSH. With
+                   breeze, its .pub is installed in the modified backup.
+--root-password PW breeze only: root password to set. Prompted if omitted.
+--out PATH         breeze only: output file. Default: encrypted_backup_mod.tar.gz
 --address IP       Local IPv4 address used for the router callback.
---force            Try the unlock even when the version check says NO.
+--force            Try the unlock even when the version check says NO. With
+                   breeze, replace an existing output file.
 -v, --verbose      Show more detail.
 ```
 
@@ -237,6 +244,30 @@ Current compatibility knowledge:
 \* `6j11` has confirmed working units through `R3.2.6`. Very old releases may
 predate the password-history behavior, so the runtime probe is still the final
 check.
+
+### `R2.0.19.0` and older: offline configuration-backup route
+
+A `NO` on a very old build does not always mean UART. If the web UI still offers
+**Backup Settings** and **Restore Settings**, use the offline `breeze` route on
+either family:
+
+```bash
+./flash.sh breeze ~/Downloads/YOUR_BACKUP_FILE
+```
+
+It decrypts the stock configuration backup, sets a root password (or installs
+your public key), adds persistent Dropbear startup, and re-encrypts it as
+`encrypted_backup_mod.tar.gz`. You restore that file in the web UI, enable Dual
+WAN once to start SSH, and then continue with `./flash.sh backup` or
+`./flash.sh flash`.
+
+This is the same approach as the community
+[`breeze.sh`](https://github.com/abhigyan17/Airfiber_Unlock/blob/main/scripts/breeze.sh),
+built into this project. It never contacts the router and does not use
+`changeUserPassword`, so it also covers Qualcomm `6j11` units on early builds
+where the runtime probe reports no password history.
+
+Full walkthrough: [docs/BREEZE.md](docs/BREEZE.md).
 
 The version table is only a first filter. During `unlock`, the tool makes one
 normal password change on the **guest account** and checks whether the expected
