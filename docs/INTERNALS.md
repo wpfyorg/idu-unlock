@@ -181,6 +181,12 @@ rootfs carries both functions and the double-quoted hash shown above. No image
 between `R2.0.19.0` and `R2.0.19.5` has been read, which is why that window is
 `TEST` rather than `YES`.
 
+On units below that lower bound the API method cannot work. If the stock web UI
+still offers Backup and Restore, the offline configuration-backup route
+(`./flash.sh breeze`, see [BREEZE.md](BREEZE.md)) sets root SSH without touching
+`changeUserPassword`; otherwise UART is the fallback. The same route covers
+early Qualcomm builds whose runtime probe finds no password history.
+
 On the upper end, the handler is **fixed by `R3.2.3`**. Read from a stock
 `JIDU6701` rootfs on `R3.2.3` (`usr/lib/lua/luci/model/jio/session.lua`):
 
