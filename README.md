@@ -245,6 +245,23 @@ Current compatibility knowledge:
 predate the password-history behavior, so the runtime probe is still the final
 check.
 
+### What `unlock` does on `R2.0.19.0`
+
+`R2.0.19.0` reports `TEST`, not a refusal. No rootfs between `R2.0.19.0` and
+`R2.0.19.6` has been read, so `./flash.sh unlock` checks the live behaviour
+before sending anything:
+
+1. it changes the guest password once to a random value;
+2. if the guest's `passwdHistory` gains an entry, the vulnerable shell-out is
+   present and the normal unlock payloads are sent;
+3. if no entry appears, it stops with `this build does not record password
+   history`, sends no payload, and leaves the admin password unchanged. The
+   guest password is now random.
+
+`--force` sends the payloads even when the probe finds no history, but they are
+inert on a build without the shell-out. Use the offline `breeze` route below for
+those units, or UART if the web UI has no restore page.
+
 ### `R2.0.19.0` and older: offline configuration-backup route
 
 A `NO` on a very old build does not always mean UART. If the web UI still offers
