@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """idu — take a JIDU router from locked-down stock firmware to OpenWrt.
 
-Three capabilities, all driven from the router's own web API and the shell it
-hands us:
+Four capabilities. The first three talk to the router's own web API and the
+shell it hands us; `breeze` works entirely offline, on a configuration backup:
 
     detect   identify the model and work out which unlock path applies
     unlock   turn a command injection in the web API into permanent root SSH
     backup   harvest the factory/u-boot credentials and image every partition
+    breeze   rebuild a web-UI config backup with root SSH (R2.0.19.0 and older)
 
 The bug
 -------
@@ -33,6 +34,7 @@ import argparse
 import contextlib
 import dataclasses
 import errno
+import getpass
 import http.server
 import ipaddress
 import json
@@ -46,6 +48,8 @@ import socketserver
 import string
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
 from urllib.parse import urlparse
@@ -68,6 +72,20 @@ GUEST_USER_TYPE = "2"
 STAGING_PATH = "/a"
 
 FACTORY_PASSWORD = "Jiocentrum"
+
+# The stock firmware encrypts its configuration backup with this literal string
+# as the passphrase. It is a fixed vendor value, not a file this tool reads.
+STOCK_BACKUP_KEY = "/etc/server.key"
+BREEZE_OUTPUT = "encrypted_backup_mod.tar.gz"
+
+# Written into the restored backup so Dropbear comes back after every boot.
+IDU_SSH_INIT = """#!/bin/sh /etc/rc.common
+START=99
+STOP=01
+start() { dropbear -R -p 0.0.0.0:22; }
+stop()  { killall dropbear; }
+reload() { start; }
+"""
 
 # Set by --verbose in main(): adds the per-command detail behind each step.
 VERBOSE = False
@@ -754,8 +772,12 @@ class PasswordVector(Vector):
                 "way. The guest\n"
                 "    password changed, but nothing else was touched. Pass "
                 "--force to send\n"
-                "    the payloads anyway; this tool's fallback is the "
-                "u-boot/UART console.")
+                "    the payloads anyway.\n"
+                "    If the web UI still offers Backup and Restore, the offline\n"
+                "    `./flash.sh breeze <config-backup>` route can set root SSH\n"
+                "    without this API (see docs/BREEZE.md). Otherwise the "
+                "fallback is\n"
+                "    the u-boot/UART console.")
 
         injector = Injector()
         for label, payload in (("fetch", injector.download(address)),
@@ -1316,6 +1338,304 @@ def backup(shell: Shell, outdir: str, include_full_chip: bool = False) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# offline config-backup route ("breeze")
+# --------------------------------------------------------------------------- #
+# The stock web UI can export an encrypted configuration backup, and it can
+# restore one. That is enough to get root SSH without the web API, on builds
+# where changeUserPassword is not injectable (R2.0.19.0 and older). The steps
+# mirror the community breeze.sh:
+#
+#   1. decrypt the backup with the vendor's fixed passphrase;
+#   2. set a root password hash (or install an authorized key);
+#   3. arrange for Dropbear to start once Dual WAN brings mwan3 up, and on boot;
+#   4. repack and re-encrypt it as a file the stock UI will restore.
+#
+# Everything here is local. No router session, no network, no port 80.
+
+def _openssl(args: list, data: str | None = None) -> subprocess.CompletedProcess:
+    if shutil.which("openssl") is None:
+        raise IduError(
+            "`openssl` is not installed, or not on PATH.\n"
+            "    Ubuntu: sudo apt install openssl (macOS usually ships it).\n"
+            "    Windows: run this command inside WSL.")
+    return subprocess.run(["openssl"] + args, input=data,
+                          capture_output=True, text=True)
+
+
+def _decrypt_backup(source: str, target: str) -> None:
+    result = _openssl(["enc", "-pbkdf2", "-d", "-aes256", "-k", STOCK_BACKUP_KEY,
+                       "-in", source, "-out", target])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        hint = detail[-1] if detail else "openssl could not decrypt it"
+        raise IduError(
+            f"could not decrypt {source}:\n    {hint}\n"
+            "    Use the configuration backup downloaded from\n"
+            "    Administration -> Management -> Backup Settings. A firmware image or\n"
+            "    a partition dump is not encrypted with the stock key.")
+
+
+def _encrypt_backup(source: str, target: str) -> None:
+    result = _openssl(["enc", "-pbkdf2", "-e", "-aes256", "-k", STOCK_BACKUP_KEY,
+                       "-in", source, "-out", target])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        hint = detail[-1] if detail else "openssl failed"
+        raise IduError(f"could not re-encrypt the backup:\n    {hint}")
+
+
+def _safe_extract(archive: tarfile.TarFile, destination: str) -> None:
+    """Extract without allowing an entry to escape the destination.
+
+    A vendor backup can contain symlinks (``/etc/resolv.conf`` is a common one),
+    so they are allowed — but a later entry may not be written through one.
+    """
+    base = os.path.realpath(destination)
+    links = set()
+    members = []
+    for member in archive.getmembers():
+        base_name = os.path.basename(member.name)
+        if base_name.startswith("._") or base_name == ".DS_Store":
+            continue  # macOS metadata, not part of the router config
+        members.append(member)
+        name = os.path.normpath(member.name.replace("\\", "/"))
+        if name.startswith("..") or os.path.isabs(name):
+            raise IduError(f"backup archive contains an unsafe path: {member.name}")
+        target = os.path.realpath(os.path.join(destination, name))
+        if target != base and not target.startswith(base + os.sep):
+            raise IduError(f"backup archive contains an unsafe path: {member.name}")
+        parent = os.path.dirname(name)
+        while parent and parent != ".":
+            if parent in links:
+                raise IduError(
+                    f"backup archive writes through a symlink: {member.name}")
+            parent = os.path.dirname(parent)
+        if member.issym():
+            links.add(name)
+    archive.extractall(destination, members=members)
+
+
+def _backup_path(root: str, relative: str) -> str | None:
+    """Find a path in an extracted backup, tolerating a wrapped top directory."""
+    direct = os.path.join(root, *relative.split("/"))
+    if os.path.lexists(direct):
+        return direct
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            candidate = os.path.join(base, name)
+            tail = os.path.relpath(candidate, root).replace(os.sep, "/")
+            if tail.endswith("/" + relative) or tail == relative:
+                return candidate
+    return None
+
+
+def _write_text(path: str, text: str, mode: int = 0o644) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        mode = os.stat(path).st_mode & 0o7777
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+    os.chmod(path, mode)
+
+
+def _root_hash(password: str, salt: str) -> str:
+    if len(password) < PASSWORD_MIN:
+        raise IduError(f"the root password must be at least {PASSWORD_MIN} characters")
+    if any(character in password for character in "\r\n"):
+        raise IduError("the root password cannot contain a newline")
+    if not re.fullmatch(r"[./0-9A-Za-z]{1,8}", salt):
+        raise IduError("the salt must be 1-8 characters from [./0-9A-Za-z]")
+    # -stdin keeps the password out of the process list.
+    result = _openssl(["passwd", "-1", "-salt", salt, "-stdin"], data=password + "\n")
+    value = result.stdout.strip()
+    if result.returncode != 0 or not re.fullmatch(r"\$1\$[^:\s]+", value):
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise IduError("openssl could not hash the root password"
+                       + (f": {detail[-1]}" if detail else ""))
+    return value
+
+
+def _set_root_hash(shadow: str, password_hash: str) -> None:
+    with open(shadow, encoding="utf-8", errors="surrogateescape") as handle:
+        lines = handle.readlines()
+    for index, line in enumerate(lines):
+        if line.startswith("root:"):
+            fields = line.rstrip("\n").split(":")
+            fields[1] = password_hash
+            lines[index] = ":".join(fields) + "\n"
+            break
+    else:
+        raise IduError("the backup's etc/shadow has no root entry")
+    _write_text(shadow, "".join(lines), 0o600)
+
+
+def _public_key(path: str) -> str:
+    candidate = path if path.endswith(".pub") else path + ".pub"
+    if not os.path.exists(candidate):
+        candidate = path
+    if not os.path.exists(candidate):
+        raise IduError(f"no public key found for {path} (looked for {path}.pub)")
+    with open(candidate, encoding="utf-8") as handle:
+        text = handle.read().strip()
+    if not re.match(r"^(ssh-(rsa|ed25519)|ecdsa-sha2-|sk-(ssh|ecdsa)-)", text):
+        raise IduError(f"{candidate} does not look like an SSH public key")
+    return text
+
+
+def _install_key(root: str, public_key: str) -> None:
+    for relative in ("etc/dropbear/authorized_keys", "root/.ssh/authorized_keys"):
+        target = os.path.join(root, *relative.split("/"))
+        existing = ""
+        if os.path.exists(target):
+            with open(target, encoding="utf-8") as handle:
+                existing = handle.read()
+        lines = [line for line in existing.splitlines() if line.strip()]
+        if public_key not in lines:
+            lines.append(public_key)
+        _write_text(target, "\n".join(lines) + "\n", 0o600)
+        os.chmod(os.path.dirname(target), 0o700)
+
+
+def _append_line(path: str, line: str) -> None:
+    existing = ""
+    if os.path.exists(path):
+        with open(path, encoding="utf-8", errors="surrogateescape") as handle:
+            existing = handle.read()
+    if line in existing.splitlines():
+        return
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    _write_text(path, existing + line + "\n", 0o755)
+
+
+def _ask_root_password() -> str:
+    first = getpass.getpass("New root password: ")
+    second = getpass.getpass("Repeat: ")
+    if first != second:
+        raise IduError("the passwords do not match")
+    if len(first) < PASSWORD_MIN:
+        raise IduError(f"the root password must be at least {PASSWORD_MIN} characters")
+    return first
+
+
+def breeze(source: str, out: str | None = None, root_password: str | None = None,
+           key: str | None = None, salt: str | None = None,
+           force: bool = False) -> str:
+    """Rebuild a stock config backup with root SSH, then explain how to restore it."""
+    source = os.path.abspath(os.path.expanduser(source))
+    if not os.path.isfile(source):
+        raise IduError(f"no such backup file: {source}")
+    out = os.path.abspath(os.path.expanduser(out or BREEZE_OUTPUT))
+    if out == source:
+        raise IduError("the output would overwrite the original backup; choose --out")
+    if os.path.exists(out) and not force:
+        raise IduError(f"{out} already exists; pass --force to replace it")
+
+    public_key = _public_key(key) if key else None
+    if public_key and "ssh-ed25519" in public_key.split()[0]:
+        print("[!] the stock Dropbear build may reject Ed25519 keys; RSA is safer")
+
+    if root_password is None and public_key is None:
+        root_password = _ask_root_password()
+    elif root_password is not None:
+        if not root_password:
+            raise IduError("the root password cannot be empty")
+        if len(root_password) < PASSWORD_MIN:
+            raise IduError(
+                f"the root password must be at least {PASSWORD_MIN} characters")
+
+    with tempfile.TemporaryDirectory(prefix="idu-breeze-") as work:
+        decrypted = os.path.join(work, "backup.tar.gz")
+        _decrypt_backup(source, decrypted)
+
+        root = os.path.join(work, "root")
+        os.makedirs(root)
+        try:
+            with tarfile.open(decrypted, "r:gz") as archive:
+                _safe_extract(archive, root)
+        except tarfile.TarError as problem:
+            raise IduError(f"the decrypted backup is not a tar.gz archive: {problem}")
+
+        shadow = _backup_path(root, "etc/shadow")
+        if shadow is None:
+            raise IduError("the backup has no etc/shadow; is it a configuration backup?")
+        if not os.path.realpath(shadow).startswith(os.path.realpath(root) + os.sep):
+            raise IduError("the backup's etc/shadow points outside the archive")
+
+        if root_password is not None:
+            use_salt = salt or "".join(
+                secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
+            _set_root_hash(shadow, _root_hash(root_password, use_salt))
+
+        if public_key:
+            _install_key(root, public_key)
+
+        # Dual WAN starts mwan3, and mwan3 sources this file. That gives the
+        # first Dropbear process without a shell. The init script then keeps
+        # SSH alive across later boots (the stock firmware has no rc.local).
+        _append_line(os.path.join(root, "etc", "mwan3.user"),
+                     "dropbear -p 0.0.0.0:22")
+
+        init = os.path.join(root, "etc", "init.d", "idu-ssh")
+        _write_text(init, IDU_SSH_INIT, 0o755)
+        rc_d = os.path.join(root, "etc", "rc.d")
+        os.makedirs(rc_d, exist_ok=True)
+        for name in ("S99idu-ssh", "K01idu-ssh"):
+            link = os.path.join(rc_d, name)
+            if os.path.lexists(link):
+                os.remove(link)
+            os.symlink("../init.d/idu-ssh", link)
+
+        modified = os.path.join(work, "backup_mod.tar.gz")
+        with tarfile.open(modified, "w:gz") as archive:
+            for name in sorted(os.listdir(root)):
+                archive.add(os.path.join(root, name), arcname=f"./{name}")
+
+        _encrypt_backup(modified, out)
+        os.chmod(out, 0o600)
+        try:
+            verify = os.path.join(work, "verify.tar.gz")
+            _decrypt_backup(out, verify)
+            with tarfile.open(verify, "r:gz") as archive:
+                names = archive.getnames()
+            if not any(name.rstrip("/").endswith("etc/shadow") for name in names):
+                raise IduError("the rebuilt backup did not contain etc/shadow")
+        except Exception:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(out)
+            raise
+
+    print(f"[+] Modified backup: {out}")
+    print("[*] It still holds your router's configuration and credentials. "
+          "Keep it private.")
+    print()
+    print("Next steps:")
+    print("  1. Open https://192.168.31.1, then Administration -> Management ->")
+    print("     Restore Settings.")
+    print(f"  2. Upload {os.path.basename(out)} and restore it. The router reboots.")
+    print("  3. Connect over SSH:")
+    if public_key:
+        private_key = key[:-4] if key.endswith(".pub") else key
+        print(f"       ssh -i {private_key} -o IdentitiesOnly=yes root@192.168.31.1")
+    else:
+        print("       ssh root@192.168.31.1")
+        print("     Enter the root password you just set.")
+    print("     If SSH is refused, log in to the web UI, open")
+    print("     https://192.168.31.1/#/WAN/DualWan, enable Dual WAN and save.")
+    print("     That starts Dropbear; disable Dual WAN again once SSH works.")
+    print("  4. Verify root access:")
+    print("       whoami")
+    print("     It should print: root")
+    print("  5. Confirm SSH survives a reboot:")
+    print("       ls -l /etc/rc.d/S99idu-ssh")
+    print("     If the restore dropped it, see docs/BREEZE.md for the manual")
+    print("     persistence step, then back up or flash OpenWrt:")
+    print("       ./flash.sh backup")
+    print("       ./flash.sh flash")
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # command line
 # --------------------------------------------------------------------------- #
 def main(argv: list | None = None) -> int:
@@ -1348,6 +1668,20 @@ def main(argv: list | None = None) -> int:
     check_p = subs.add_parser("check", help="can this unit be unlocked? (read-only)")
     check_p.add_argument("--json", action="store_true", help="machine-readable verdict")
 
+    breeze_p = subs.add_parser(
+        "breeze", help="offline: rebuild a config backup with root SSH "
+                       "(R2.0.19.0 and older)")
+    breeze_p.add_argument("backup", help="configuration backup from the web UI")
+    breeze_p.add_argument("--root-password", default=None,
+                          help="root password to set (prompted if omitted)")
+    breeze_p.add_argument("--key", default=argparse.SUPPRESS,
+                          help="install this SSH public key instead of a password")
+    breeze_p.add_argument("--out", default=None,
+                          help=f"output file (default {BREEZE_OUTPUT})")
+    breeze_p.add_argument("--salt", default=None, help=argparse.SUPPRESS)
+    breeze_p.add_argument("--force", action="store_true",
+                          help="replace an existing output file")
+
     unlock_p = subs.add_parser("unlock", help="gain root SSH and keep it")
     unlock_p.add_argument("--port", type=int, default=80, help="callback HTTP port")
     unlock_p.add_argument("--force", action="store_true",
@@ -1369,6 +1703,12 @@ def main(argv: list | None = None) -> int:
     global VERBOSE, BANNER
     VERBOSE = bool(getattr(args, "verbose", False))
     BANNER = not getattr(args, "no_banner", False)
+
+    if args.command == "breeze":
+        breeze(args.backup, out=args.out, root_password=args.root_password,
+               key=getattr(args, "key", None), salt=args.salt, force=args.force)
+        return 0
+
     api = Api(args.router)
 
     # One session at a time: the backend permits a single admin login, so this
@@ -1406,6 +1746,9 @@ def main(argv: list | None = None) -> int:
                 if verdict.method_closed:
                     print("    - this covers the changeUserPassword method only; "
                           "no other handler is tested")
+                    print("    - if the web UI still offers Backup and Restore, "
+                          "./flash.sh breeze FILE")
+                    print("      can set root SSH offline; see docs/BREEZE.md")
             return 0 if verdict.test_required or verdict.unlockable else 2
 
         if args.command == "unlock":

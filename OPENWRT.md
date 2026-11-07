@@ -58,6 +58,9 @@ Key facts:
 - Use Ethernet, not Wi-Fi. Wi-Fi on the temporary system is unreliable or absent.
 - **Never pull power** during `ubiformat` or `sysupgrade`.
 - Unsure of your family? `./flash.sh detect` prints model and family.
+- Locked on `R2.0.19.0` or older? If the web UI has Backup and Restore, use the
+  offline [`breeze` route](docs/BREEZE.md) to get root SSH before following this
+  page.
 
 > The 6101 is covered by both routes. Route A uses a matching `jidu6101`
 > factory stage, so the permanent `jidu6101` sysupgrade is accepted normally

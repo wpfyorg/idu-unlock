@@ -9,15 +9,22 @@
 #   ./flash.sh download        detect the model, download + verify its OpenWrt images
 #   ./flash.sh flash           backup first, then download + install OpenWrt
 #   ./flash.sh detect          identify the model, change nothing
+#   ./flash.sh breeze FILE     offline: rebuild a web-UI config backup with root
+#                              SSH, for R2.0.19.0 and older builds (no router
+#                              connection needed; see docs/BREEZE.md)
 #
 # Options:
 #   --router URL    router base URL (default https://192.168.31.1)
 #   --password P    router admin password (prompted if omitted)
 #   --key PATH      Optional SSH key. A new unlock clears the root password
 #                   whether or not a key is supplied, and installs persistent
-#                   SSH. Existing root SSH is left as found.
+#                   SSH. Existing root SSH is left as found. With breeze, the
+#                   matching .pub is installed in the backup instead.
+#   --root-password P  breeze only: root password to set (prompted if omitted)
+#   --out PATH      breeze only: output file (default encrypted_backup_mod.tar.gz)
 #   --address IP    local address the router should call back on (VPN/WSL)
-#   --force         send the payloads even when check says NO (advanced)
+#   --force         send the payloads even when check says NO (advanced);
+#                   with breeze, replace an existing output file
 #   -v, --verbose   show the per-command detail behind each method
 #
 # The router must be SET UP, not factory-fresh: a reset IDU keeps its API locked
@@ -42,31 +49,44 @@ ROUTER="${ROUTER:-https://192.168.31.1}"
 PASSWORD="${PASSWORD:-}"
 KEY="${KEY:-}"
 ADDRESS="${ADDRESS:-}"
+ROOT_PASSWORD="${ROOT_PASSWORD:-}"
+OUT="${OUT:-}"
 FORCE=0
 VERBOSE=0
 NOBANNER=0
 CMD=""
+BREEZE_FILE=""
 
 # Progress prefixes: [*] working, [+] success, [-] failed.
 say()  { printf '\033[1;34m[*]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; }
 
 usage() {
-  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    unlock|backup|download|flash|detect|check) CMD="$1"; shift ;;
+    unlock|backup|download|flash|detect|check|breeze) CMD="$1"; shift ;;
     --router)   ROUTER="$2";   shift 2 ;;
     --password) PASSWORD="$2"; shift 2 ;;
     --key)      KEY="$2";      shift 2 ;;
+    --root-password) ROOT_PASSWORD="$2"; shift 2 ;;
+    --out)      OUT="$2";      shift 2 ;;
     --address)  ADDRESS="$2";  shift 2 ;;
     --force)    FORCE=1;       shift ;;
     -v|--verbose) VERBOSE=1;   shift ;;
     -h|--help)  usage; exit 0 ;;
-    -*)         bad "unknown option: $1"; usage; exit 2 ;;
-    *)          bad "unexpected argument: $1"; usage; exit 2 ;;
+    -*)
+      bad "unknown option: $1"; usage; exit 2
+      ;;
+    *)
+      if [ "$CMD" = "breeze" ] && [ -z "$BREEZE_FILE" ]; then
+        BREEZE_FILE="$1"; shift
+      else
+        bad "unexpected argument: $1"; usage; exit 2
+      fi
+      ;;
   esac
 done
 [ -n "$CMD" ] || CMD="auto"
@@ -116,12 +136,20 @@ fi
 # Optional, and never generated: a new unlock clears root's password with or without a key.
 
 # ---- password ------------------------------------------------------------ #
-if [ -z "$PASSWORD" ]; then
-  printf 'Router admin password: '
-  read -rs PASSWORD
-  echo
+# breeze works on a file, never on the router, so it needs no admin password.
+if [ "$CMD" = "breeze" ]; then
+  [ -n "$BREEZE_FILE" ] || {
+    bad "usage: ./flash.sh breeze <backup-file> [--root-password PW] [--key PATH]"
+    exit 2
+  }
+else
+  if [ -z "$PASSWORD" ]; then
+    printf 'Router admin password: '
+    read -rs PASSWORD
+    echo
+  fi
+  [ -n "$PASSWORD" ] || { bad "no password given"; exit 2; }
 fi
-[ -n "$PASSWORD" ] || { bad "no password given"; exit 2; }
 
 # -u keeps Python's output unbuffered: piped through the driver it would
 # otherwise sit in a block buffer and make a slow login look like a hang.
@@ -199,6 +227,15 @@ case "$CMD" in
   check)
     idu check
     exit $?
+    ;;
+
+  breeze)
+    breeze_args=( "$BREEZE_FILE" )
+    [ -n "$ROOT_PASSWORD" ] && breeze_args+=( --root-password "$ROOT_PASSWORD" )
+    [ -n "$KEY" ] && breeze_args+=( --key "$KEY" )
+    [ -n "$OUT" ] && breeze_args+=( --out "$OUT" )
+    [ "$FORCE" -eq 1 ] && breeze_args+=( --force )
+    "$PY" -u "$HERE/idu.py" breeze "${breeze_args[@]}" || exit 1
     ;;
 
   unlock)

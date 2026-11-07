@@ -45,8 +45,12 @@ back to stock, and it holds the factory data that the flash does not recreate,
 including `uboot_credentials.env` for the UART route.
 
 The backup needs root SSH: either a unit that is already unlocked (for example
-through UART), or a successful `unlock`. Run `./flash.sh check` first. If it
-reports `NO` and SSH is not already enabled, this tool has no software-only
-backup for that unit. The UART route on the model page is then the fallback, and
-you need it before flashing anything. See
+through UART), or a successful `unlock`. Run `./flash.sh check` first.
+
+If it reports `NO` on `R2.0.19.0` or an older build, and the web UI still has
+**Backup Settings** and **Restore Settings**, use the offline
+[`breeze` route](../BREEZE.md) to get root SSH from a modified configuration
+backup. It works on both the 6j01 and 6j11 families. If the web UI has no
+restore page, the UART route on the model page is the fallback, and you need it
+before flashing anything. See
 [Checking firmware compatibility](../../README.md#checking-firmware-compatibility).

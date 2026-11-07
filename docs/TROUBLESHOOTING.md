@@ -60,9 +60,18 @@ unreachable. There are two cases:
 - **`R3.2.3` or newer (MediaTek):** the vendor replaced the shell-out with
   `luci.sys.user.setpasswd`.
 
-`unlock` refuses before sending a payload. There is also no supported
-software-only backup on these builds: reading the flash needs root SSH, and this
-tool has no other network route. The UART/u-boot console is the fallback.
+`unlock` refuses before sending a payload. On builds where the web UI still has
+**Backup Settings** and **Restore Settings**, use the offline
+[`breeze` configuration-backup route](BREEZE.md) instead:
+
+```bash
+./flash.sh breeze ~/Downloads/YOUR_BACKUP_FILE
+```
+
+It works on both families and needs no network route into the router. Restore
+the modified file, enable Dual WAN once to start Dropbear, then run
+`./flash.sh backup`. If the web UI has no restore page, the UART/u-boot console
+is the fallback.
 
 `NO` is a verdict about `changeUserPassword`, not a security audit of the
 firmware. `--force` is not a fix for a genuinely fixed build. It only helps when
@@ -257,10 +266,14 @@ you were the one who just replaced sshd on the device.
 
 Not unless root SSH is already enabled, for example through UART. The backup
 reads `/dev/mtd*` over SSH as root, and `flash.sh backup` runs `unlock` first;
-`unlock` uses the existing SSH login if it finds one. On a locked unit where
-`unlock` cannot work, there is no software-only backup — the UART/u-boot console
-is the fallback. Do not install OpenWrt first and plan to back up afterwards; the
-stock image is gone by then.
+`unlock` uses the existing SSH login if it finds one.
+
+On an early build where `unlock` cannot work, the web-UI configuration backup is
+still enough to get root SSH first: download it, rebuild it with
+`./flash.sh breeze`, restore it, and then run `./flash.sh backup`. See
+[BREEZE.md](BREEZE.md). If the web UI has no restore page, the UART/u-boot
+console is the fallback. Do not install OpenWrt first and plan to back up
+afterwards; the stock image is gone by then.
 
 </details>
 
