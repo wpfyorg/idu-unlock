@@ -3,7 +3,9 @@
 Some early builds cannot be unlocked over the network. On both hardware
 families, units on **`R2.0.19.0` and older** usually predate the
 password-history shell-out that `./flash.sh unlock` uses, so `./flash.sh check`
-reports `NO` and the API route stops before sending a payload.
+reports `NO` and the API route stops before sending a payload. The same offline
+route also works on any build where the API has been fixed, as long as the web
+UI still offers Backup and Restore.
 
 If that unit's web UI still offers **Backup Settings** and **Restore Settings**,
 you do not need UART yet. You can download the encrypted configuration backup,
@@ -39,7 +41,7 @@ Do **not** use it when the normal network unlock already works. `check` reportin
 | MediaTek `6j01`, `R2.0.19.6`–`R3.2.0` | `YES` | `./flash.sh unlock` |
 | Qualcomm `6j11`, early `R2.x` builds | probe decides, often `NO` | This page |
 | Qualcomm `6j11`, `R3.2.6` and earlier | `YES` | `./flash.sh unlock` |
-| Either family, `R3.2.3`+/fixed builds | `NO` | UART is the remaining route |
+| Either family, fixed/newer builds | `NO` for the API | This page if Backup/Restore exists; otherwise UART |
 
 ## How it works
 
