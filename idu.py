@@ -328,11 +328,16 @@ class Injector:
         return self.encode(f"sh {path}")
 
     def literal(self, length: int = 16) -> str:
-        """A random password with no shell metacharacters, for the history probe."""
+        """A random password with no shell metacharacters, for the history probe.
+
+        `!` is not a metacharacter for a non-interactive sh, but the JIDU6101
+        R3.2 policy refuses an all-alphanumeric password with
+        ERR_WEB_USER_INVALID_PASSWORD, so one special character is mandatory.
+        """
         alphabet = string.ascii_letters + string.digits
         body = "".join(secrets.choice(alphabet)
-                       for _ in range(max(0, length - len(self.salt))))
-        return (self.salt + body)[:PASSWORD_MAX]
+                       for _ in range(max(0, length - len(self.salt) - 1)))
+        return (self.salt + "!" + body)[:PASSWORD_MAX]
 
 
 # --------------------------------------------------------------------------- #
@@ -573,13 +578,19 @@ class Shell:
                 "-o", "ConnectTimeout=10"]
         if self.password is None:
             opts += ["-i", self.key, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes"]
+        elif self.password == "":
+            # Root has no password after `passwd -d root`, and dropbear accepts
+            # the "none" method for that account. No prompt, so no expect.
+            opts += ["-o", "PubkeyAuthentication=no",
+                     "-o", "PreferredAuthentications=none",
+                     "-o", "BatchMode=yes"]
         else:
             opts += ["-o", "PubkeyAuthentication=no", "-o", "NumberOfPasswordPrompts=1",
                      "-o", "PreferredAuthentications=password"]
         return opts
 
     def _exec(self, argv: list, timeout: int) -> subprocess.CompletedProcess:
-        if self.password is None:
+        if self.password is None or self.password == "":
             return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         return _expect(argv, self.password, timeout)
 

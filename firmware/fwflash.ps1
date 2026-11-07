@@ -365,7 +365,7 @@ try {
     Say 'writing the idle UBI slot (the unit reboots itself)'
     $rc = Invoke-Ssh $stockOpts "root@$Router" 'sh /tmp/jidu-flash.sh'
     # 255 means the unit dropped the connection as it rebooted, which is expected.
-    if (-not $DryRun -and $rc -ne 0 -and $rc -ne 255) {
+    if (-not $DryRun -and $rc -ne 0 -and $rc -ne 255 -and $rc -ne 246) {
         Die "the slot was not written (exit $rc); the unit is still on stock firmware"
     }
 
@@ -408,7 +408,9 @@ try {
 
     Say 'flashing it (sysupgrade -n, settings are not kept)'
     $rc = Invoke-Ssh $owrtOpts "root@$OpenWrt" 'sysupgrade -n /tmp/sysupgrade.bin'
-    if (-not $DryRun -and $rc -ne 0 -and $rc -ne 255) {
+    # 246 is `ubus call system sysupgrade` losing the daemon once the upgrade
+    # takes over, not a refusal: the overlay check below decides success.
+    if (-not $DryRun -and $rc -ne 0 -and $rc -ne 255 -and $rc -ne 246) {
         Die "sysupgrade refused the image (exit $rc); the unit is still in initramfs"
     }
 
