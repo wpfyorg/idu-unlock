@@ -321,6 +321,7 @@ class PasswordProbeTests(unittest.TestCase):
         with self.assertRaises(idu.UnsupportedFirmware):
             self.run_vector(api)
         self.assertEqual(len(api.calls), 1)
+        self.assertTrue(all(char.isalnum() or char == "!" for char in api.calls[0]))
         self.assertNotIn("$(", api.calls[0])
 
     def test_missing_history_points_at_the_breeze_guide(self):

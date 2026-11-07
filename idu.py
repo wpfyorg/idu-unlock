@@ -1058,8 +1058,12 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                         api.set_password(guest["recordId"], Injector().encode("dropbear -R -p 22"))
                     bootstrap_shell = Shell(api.host, password="")
                     bootstrap_shell.wait(15, "the router")
-                except Exception:
-                    pass
+                except Exception as problem:
+                    detail = str(problem)
+                    if password:
+                        detail = detail.replace(password, "[redacted]")
+                    print(f"    Direct fallback failed ({type(problem).__name__}): "
+                          f"{detail}", file=sys.stderr)
 
                 if bootstrap_shell is None or not bootstrap_shell.alive():
                     print(f"    Method {number}/{total}: failed (the router accepted "
