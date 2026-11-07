@@ -972,8 +972,10 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
         raise UnsupportedFirmware(
             "this firmware cannot be unlocked with changeUserPassword:\n"
             f"    {detail}\n"
-            "    Nothing was changed. This tool has no other network vector;\n"
-            "    the u-boot/UART console is its fallback.\n"
+            "    Nothing was changed. If the web UI still offers Backup and\n"
+            "    Restore, the offline `./flash.sh breeze <config-backup>` route\n"
+            "    can set root SSH (see docs/BREEZE.md); otherwise the u-boot/UART\n"
+            "    console is the fallback.\n"
             "    Pass --force to send the payloads anyway.")
 
     pubkey = None
