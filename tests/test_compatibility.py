@@ -351,6 +351,31 @@ class PasswordProbeTests(unittest.TestCase):
         self.assertEqual(len(api.calls), 3)
         self.assertIn("$(", api.calls[1])
 
+    def test_timing_probe_when_history_absent(self):
+        class ApiNoHistory:
+            def __init__(self):
+                self.calls = []
+            def guest_record(self):
+                return {"recordId": "rec1"}
+            def set_password(self, record_id, password):
+                self.calls.append(password)
+                return {"status": "OK"}
+
+        api = ApiNoHistory()
+        times = [0.0, 1.2, 1.2, 1.2, 1.2]
+        with mock.patch("time.time", side_effect=times), \
+             mock.patch.object(idu.time, "sleep"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            idu.PasswordVector().execute(api, "192.168.31.51")
+        self.assertEqual(len(api.calls), 4)
+        self.assertIn("sleep", api.calls[1])
+
+    def test_14_and_15_char_ip_fits_within_budget(self):
+        p14 = idu.Injector().download("192.168.31.101")
+        self.assertLessEqual(len(p14), idu.PASSWORD_MAX)
+        p15 = idu.Injector().download("192.168.100.100")
+        self.assertLessEqual(len(p15), idu.PASSWORD_MAX)
+
 
 @unittest.skipIf(os.name == "nt", "POSIX bind errors")
 class PortErrorTests(unittest.TestCase):
