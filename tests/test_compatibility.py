@@ -199,6 +199,10 @@ class CompatibilityTests(unittest.TestCase):
         # a member report on a JIDU6611: the password bug still ran on R3.2.6
         self.assert_state("SRCMJIO_JIDU6611_R3.2.6", "YES", model="JIDU6611")
 
+    def test_jidu6711_needs_device_verification(self):
+        self.assertEqual(idu.Device("JIDU6711", "", "", {}).family, "qualcomm")
+        self.assert_state("JIO_JIDU6711_R3.2.6", "TEST", model="JIDU6711")
+
     def test_qualcomm_beyond_report_requires_api_test(self):
         # nothing beyond the R3.2.6 datapoint is known for the 6j11 builds
         self.assert_state("SRCMJIO_JIDU6611_R3.2.7", "TEST", model="JIDU6611")
@@ -266,9 +270,13 @@ class InjectorTests(unittest.TestCase):
         self.assertGreaterEqual(len(password), idu.PASSWORD_MIN)
         self.assertLessEqual(len(password), idu.PASSWORD_MAX)
         self.assertNotIn("|", password)
+        self.assertTrue(any(c.islower() for c in password))
+        self.assertTrue(any(c.isupper() for c in password))
+        self.assertTrue(any(c.isdigit() for c in password))
         # JIDU6101 R3.2 rejects an all-alphanumeric password with
         # ERR_WEB_USER_INVALID_PASSWORD, so the probe has to carry a symbol.
-        self.assertTrue(any(not character.isalnum() for character in password))
+        self.assertIn("!", password)
+        self.assertTrue(all(c.isalnum() or c == "!" for c in password))
 
 
 class ShellAuthTests(unittest.TestCase):
