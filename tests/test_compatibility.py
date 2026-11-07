@@ -351,7 +351,7 @@ class PasswordProbeTests(unittest.TestCase):
         self.assertEqual(len(api.calls), 3)
         self.assertIn("$(", api.calls[1])
 
-    def test_timing_probe_when_history_absent(self):
+    def test_absent_history_stops_without_independent_execution_evidence(self):
         class ApiNoHistory:
             def __init__(self):
                 self.calls = []
@@ -362,19 +362,23 @@ class PasswordProbeTests(unittest.TestCase):
                 return {"status": "OK"}
 
         api = ApiNoHistory()
-        times = [0.0, 1.2, 1.2, 1.2, 1.2]
-        with mock.patch("time.time", side_effect=times), \
-             mock.patch.object(idu.time, "sleep"), \
-             contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(idu.time, "sleep"), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaises(idu.UnsupportedFirmware):
             idu.PasswordVector().execute(api, "192.168.31.51")
-        self.assertEqual(len(api.calls), 4)
-        self.assertIn("sleep", api.calls[1])
+        self.assertEqual(len(api.calls), 1)
 
     def test_14_and_15_char_ip_fits_within_budget(self):
         p14 = idu.Injector().download("192.168.31.101")
         self.assertLessEqual(len(p14), idu.PASSWORD_MAX)
+        self.assertIn("192.168.31.101", p14)
+        self.assertIn("curl", p14)
+        self.assertTrue(p14.endswith(">/a)"))
         p15 = idu.Injector().download("192.168.100.100")
         self.assertLessEqual(len(p15), idu.PASSWORD_MAX)
+        self.assertIn("192.168.100.100", p15)
+        self.assertIn("curl", p15)
+        self.assertTrue(p15.endswith(">a)"))
 
 
 @unittest.skipIf(os.name == "nt", "POSIX bind errors")
