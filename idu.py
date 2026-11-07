@@ -77,6 +77,7 @@ FACTORY_PASSWORD = "Jiocentrum"
 # as the passphrase. It is a fixed vendor value, not a file this tool reads.
 STOCK_BACKUP_KEY = "/etc/server.key"
 BREEZE_OUTPUT = "encrypted_backup_mod.tar.gz"
+BREEZE_GUIDE = "https://github.com/wpfyorg/idu-unlock/blob/main/docs/BREEZE.md"
 
 # Written into the restored backup so Dropbear comes back after every boot.
 IDU_SSH_INIT = """#!/bin/sh /etc/rc.common
@@ -773,11 +774,11 @@ class PasswordVector(Vector):
                 "    password changed, but nothing else was touched. Pass "
                 "--force to send\n"
                 "    the payloads anyway.\n"
-                "    If the web UI still offers Backup and Restore, the offline\n"
-                "    `./flash.sh breeze <config-backup>` route can set root SSH\n"
-                "    without this API (see docs/BREEZE.md). Otherwise the "
-                "fallback is\n"
-                "    the u-boot/UART console.")
+                "    If the web UI still offers Backup and Restore, use the\n"
+                "    offline breeze method instead:\n"
+                f"      {BREEZE_GUIDE}\n"
+                "      ./flash.sh breeze <config-backup>\n"
+                "    Otherwise the fallback is the u-boot/UART console.")
 
         injector = Injector()
         for label, payload in (("fetch", injector.download(address)),
@@ -973,9 +974,10 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
             "this firmware cannot be unlocked with changeUserPassword:\n"
             f"    {detail}\n"
             "    Nothing was changed. If the web UI still offers Backup and\n"
-            "    Restore, the offline `./flash.sh breeze <config-backup>` route\n"
-            "    can set root SSH (see docs/BREEZE.md); otherwise the u-boot/UART\n"
-            "    console is the fallback.\n"
+            "    Restore, use the offline breeze method:\n"
+            f"      {BREEZE_GUIDE}\n"
+            "      ./flash.sh breeze <config-backup>\n"
+            "    Otherwise the u-boot/UART console is the fallback.\n"
             "    Pass --force to send the payloads anyway.")
 
     pubkey = None
@@ -1041,8 +1043,12 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
         "    If that times out, a firewall is blocking it (on Windows, allow\n"
         "    python on Private networks). If the address is wrong (VPN or\n"
         "    multiple interfaces), pass --address with this computer's LAN\n"
-        "    address. The u-boot/UART console is this tool's fallback if the\n"
-        "    API itself is fixed.")
+        "    address.\n"
+        "    If the API itself is fixed or the probe found no history, use the\n"
+        "    offline breeze method:\n"
+        f"      {BREEZE_GUIDE}\n"
+        "      ./flash.sh breeze <config-backup>\n"
+        "    The u-boot/UART console is the last fallback.")
 
 
 # --------------------------------------------------------------------------- #

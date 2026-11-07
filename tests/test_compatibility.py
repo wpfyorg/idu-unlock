@@ -323,6 +323,13 @@ class PasswordProbeTests(unittest.TestCase):
         self.assertEqual(len(api.calls), 1)
         self.assertNotIn("$(", api.calls[0])
 
+    def test_missing_history_points_at_the_breeze_guide(self):
+        api = self.Api(records_history=False)
+        with self.assertRaises(idu.UnsupportedFirmware) as raised:
+            self.run_vector(api)
+        self.assertIn(idu.BREEZE_GUIDE, str(raised.exception))
+        self.assertIn("./flash.sh breeze", str(raised.exception))
+
     def test_unchanged_history_is_not_treated_as_support(self):
         # a downgraded unit can keep an old passwdHistory in its config
         api = self.Api(records_history=False, history="old-hash")
