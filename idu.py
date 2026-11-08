@@ -31,6 +31,7 @@ service terms. Provided as is, without warranty — see the README.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import dataclasses
 import errno
@@ -1020,6 +1021,18 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
         # A legacy-encoded key comment must not fail the unlock.
         with open(pub_path, encoding="utf-8", errors="replace") as handle:
             pubkey = handle.read().strip()
+
+        # errors="replace" can only corrupt the comment: a replaced byte in
+        # the base64 key material would install a key that cannot authenticate.
+        fields = pubkey.split()
+        try:
+            if len(fields) < 2:
+                raise ValueError("not a public key line")
+            base64.b64decode(fields[1], validate=True)
+        except ValueError as problem:
+            raise IduError(
+                f"public key at {pub_path} has invalid key material\n"
+                "    Check the file is a valid OpenSSH public key.") from problem
 
     address = callback_address(api.host, address_override)
     script = installer_script(address, pubkey)
