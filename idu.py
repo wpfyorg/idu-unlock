@@ -385,7 +385,7 @@ class _Beacon(http.server.BaseHTTPRequestHandler):
     def _note(self, text: str) -> None:
         _Beacon.hits.append(text)
         if _Beacon.logfile:
-            with open(_Beacon.logfile, "a") as handle:
+            with open(_Beacon.logfile, "a", encoding="utf-8") as handle:
                 handle.write(text + "\n")
 
     def do_GET(self):  # noqa: N802
@@ -1017,7 +1017,7 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                 f"no public key at {pub_path}\n"
                 "    Create one (ssh-keygen -t rsa -b 2048 -f PATH), or drop --key\n"
                 "    to leave root passwordless instead.")
-        with open(pub_path) as handle:
+        with open(pub_path, encoding="utf-8") as handle:
             pubkey = handle.read().strip()
 
     address = callback_address(api.host, address_override)
