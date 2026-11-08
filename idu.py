@@ -1017,7 +1017,8 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                 f"no public key at {pub_path}\n"
                 "    Create one (ssh-keygen -t rsa -b 2048 -f PATH), or drop --key\n"
                 "    to leave root passwordless instead.")
-        with open(pub_path, encoding="utf-8") as handle:
+        # A legacy-encoded key comment must not fail the unlock.
+        with open(pub_path, encoding="utf-8", errors="replace") as handle:
             pubkey = handle.read().strip()
 
     address = callback_address(api.host, address_override)
