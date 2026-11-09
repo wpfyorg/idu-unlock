@@ -1,12 +1,14 @@
 # JIDU model guides
 
-Every model this project supports has its own install page. Start with the page
-for your unit: it lists the exact image files, the route that model uses, its
-UART reference, and the parts that differ from its siblings.
+Every model this project supports has its own page. Start with the page for
+your unit: it lists the exact image files, the route that model uses, its UART
+reference, and the parts that differ from its siblings.
 
 The 6j01 pages lead with the automated SSH path, then the official 25.12.6
 sysupgrade. JIDU6101 uses its own matching factory stage. The 6j11 pages use
-the Mayank SSH method; UART is recovery only.
+the Mayank SSH method; UART is recovery only. JIDU6711 is the exception: its
+root SSH and backup are verified, flashing is not, so its page covers the
+verified steps and points at the family procedure.
 The shared procedure, with the reasoning behind each command, is
 [Installing OpenWrt](../../OPENWRT.md).
 
@@ -20,6 +22,7 @@ The shared procedure, with the reasoning behind each command, is
 | [JIDU6111](JIDU6111.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
 | [JIDU6411](JIDU6411.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
 | [JIDU6611](JIDU6611.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
+| [JIDU6711](JIDU6711.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | Root SSH + backup verified; flashing not verified |
 | [JIDU6811](JIDU6811.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
 | [JIDU6911](JIDU6911.md) | Qualcomm `6j11` | No (community) | SSH (Mayank, primary), UART recovery | not hosted here | SSH primary; community |
 
