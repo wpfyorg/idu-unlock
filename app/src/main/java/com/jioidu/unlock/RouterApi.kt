@@ -42,7 +42,7 @@ internal fun checkCompatibility(device: RouterDevice, firmware: String): Compati
     val version = Regex("""_R(\d+(?:\.\d+)+)""").find(firmware)?.groupValues?.get(1)
     val values = version?.split('.')?.mapNotNull { it.toIntOrNull() }
     val limit = if (device.family == "qualcomm") listOf(3, 2, 6) else listOf(3, 2, 0)
-    val confirmed = device.model != "JIDU6711" && device.family != "unknown" && values != null && compareRelease(values, limit) <= 0
+    val confirmed = device.family != "unknown" && values != null && compareRelease(values, limit) <= 0
     val label = "R" + limit.joinToString(".")
     val verdict = if (confirmed) {
         "YES — tested firmware range (≤$label, ${device.family})"

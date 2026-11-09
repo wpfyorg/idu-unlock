@@ -946,10 +946,6 @@ def check(api: Api) -> Verdict:
             "with unlock")
         test_required = True
 
-    if model == "JIDU6711" and vectors:
-        test_required = True
-        evidence.append("JIDU6711 family and unlock compatibility need device verification")
-
     return Verdict(model=model, firmware=version, vectors=vectors,
                    evidence=evidence, test_required=test_required,
                    method_closed=method_closed)

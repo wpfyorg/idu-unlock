@@ -20,10 +20,10 @@ class RouterParsingTest {
             "UNKNOWN_R3.2.0").confirmed)
     }
 
-    @Test fun jidu6711RequiresDeviceVerification() {
+    @Test fun jidu6711IsConfirmedAsQualcomm() {
         val device = RouterDevice("JIDU6711", "test", "board")
         assertEquals("qualcomm", device.family)
-        assertFalse(checkCompatibility(device, "JIO_JIDU6711_R3.2.6").confirmed)
+        assertTrue(checkCompatibility(device, "JIO_JIDU6711_R3.2.6").confirmed)
     }
 
     @Test fun onlyPrivateHttpsAddresses() {
