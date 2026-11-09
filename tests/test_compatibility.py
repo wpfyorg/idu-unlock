@@ -2,6 +2,7 @@ import contextlib
 import errno
 import io
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -238,6 +239,52 @@ class UnlockGateTests(unittest.TestCase):
               contextlib.redirect_stdout(io.StringIO())):
             idu.unlock(api, None, "pw", verdict=self.closed_verdict(), hint=False)
         api.session.assert_not_called()
+
+
+class PubkeyReadTests(unittest.TestCase):
+    KEY = "AAAAB3NzaC1yc2EAAAADAQABEREREREREREREREREREREQ=="
+
+    def _write_key(self, data: bytes):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = os.path.join(directory.name, "id_rsa")
+        with open(key_path + ".pub", "wb") as handle:
+            handle.write(data)
+        return key_path
+
+    def _unlock_with_key(self, key_path, installer):
+        api = mock.Mock(host="192.168.31.1")
+        shell = mock.Mock()
+        shell.alive.return_value = False
+        with (mock.patch.object(idu, "_shell_for", return_value=shell),
+              mock.patch.object(idu, "callback_address",
+                                return_value="192.168.31.51"),
+              mock.patch.object(idu, "installer_script",
+                                side_effect=installer),
+              contextlib.redirect_stdout(io.StringIO())):
+            idu.unlock(api, key_path, "pw", verdict=None, hint=False)
+
+    def test_legacy_comment_reaches_installer_with_replacement(self):
+        key_path = self._write_key(
+            b"ssh-rsa " + self.KEY.encode() + b" Jos\xe9 Garc\xeda\n")
+        seen = {}
+
+        def capture(address, pubkey):
+            seen["pubkey"] = pubkey
+            raise RuntimeError("stop after installer_script")
+
+        with self.assertRaises(RuntimeError):
+            self._unlock_with_key(key_path, capture)
+        self.assertIn(self.KEY, seen["pubkey"])
+        self.assertIn("\ufffd", seen["pubkey"])
+
+    def test_corrupt_key_material_is_rejected_before_installer(self):
+        key_path = self._write_key(
+            b"ssh-rsa " + self.KEY.encode() + b"\xff user@host\n")
+        installer = mock.Mock()
+        with self.assertRaises(idu.IduError):
+            self._unlock_with_key(key_path, installer)
+        installer.assert_not_called()
 
 
 class CallbackAddressTests(unittest.TestCase):

@@ -31,6 +31,7 @@ service terms. Provided as is, without warranty — see the README.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import dataclasses
 import errno
@@ -385,7 +386,7 @@ class _Beacon(http.server.BaseHTTPRequestHandler):
     def _note(self, text: str) -> None:
         _Beacon.hits.append(text)
         if _Beacon.logfile:
-            with open(_Beacon.logfile, "a") as handle:
+            with open(_Beacon.logfile, "a", encoding="utf-8") as handle:
                 handle.write(text + "\n")
 
     def do_GET(self):  # noqa: N802
@@ -1017,8 +1018,21 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                 f"no public key at {pub_path}\n"
                 "    Create one (ssh-keygen -t rsa -b 2048 -f PATH), or drop --key\n"
                 "    to leave root passwordless instead.")
-        with open(pub_path) as handle:
+        # A legacy-encoded key comment must not fail the unlock.
+        with open(pub_path, encoding="utf-8", errors="replace") as handle:
             pubkey = handle.read().strip()
+
+        # errors="replace" can only corrupt the comment: a replaced byte in
+        # the base64 key material would install a key that cannot authenticate.
+        fields = pubkey.split()
+        try:
+            if len(fields) < 2:
+                raise ValueError("not a public key line")
+            base64.b64decode(fields[1], validate=True)
+        except ValueError as problem:
+            raise IduError(
+                f"public key at {pub_path} has invalid key material\n"
+                "    Check the file is a valid OpenSSH public key.") from problem
 
     address = callback_address(api.host, address_override)
     script = installer_script(address, pubkey)
