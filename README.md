@@ -101,9 +101,12 @@ bypass a forgotten router-admin password.
 | JIDU6111 | Qualcomm `6j11` | Yes | Yes |
 | JIDU6411 | Qualcomm `6j11` | Yes | Yes |
 | JIDU6611 | Qualcomm `6j11` | Yes | Yes |
-| JIDU6711 | Qualcomm `6j11` (inferred) | Test required | Not verified |
+| JIDU6711 | Qualcomm `6j11` | Yes | Not verified |
 | JIDU6811 | Qualcomm `6j11` | Yes | Yes |
 | JIDU6911 | Qualcomm `6j11` | Yes | Yes |
+
+JIDU6711: a user report confirms root SSH and backup on this model. The
+automated OpenWrt install has not been tried on a JIDU6711.
 
 Not sure which model you have?
 

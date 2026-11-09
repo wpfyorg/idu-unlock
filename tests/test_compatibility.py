@@ -200,9 +200,10 @@ class CompatibilityTests(unittest.TestCase):
         # a member report on a JIDU6611: the password bug still ran on R3.2.6
         self.assert_state("SRCMJIO_JIDU6611_R3.2.6", "YES", model="JIDU6611")
 
-    def test_jidu6711_needs_device_verification(self):
+    def test_jidu6711_is_confirmed(self):
+        # a user report on a JIDU6711: root SSH and backup worked
         self.assertEqual(idu.Device("JIDU6711", "", "", {}).family, "qualcomm")
-        self.assert_state("JIO_JIDU6711_R3.2.6", "TEST", model="JIDU6711")
+        self.assert_state("JIO_JIDU6711_R3.2.6", "YES", model="JIDU6711")
 
     def test_qualcomm_beyond_report_requires_api_test(self):
         # nothing beyond the R3.2.6 datapoint is known for the 6j11 builds
