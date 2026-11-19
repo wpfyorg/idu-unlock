@@ -40,6 +40,18 @@ printf 'MODEL=UNKNOWN\\nFAMILY=unknown\\n'
                 self.assertIn('missing firmware flasher' if missing else 'no OpenWrt image set',
                               result.stdout + result.stderr)
 
+    @unittest.skipIf(os.name == 'nt', 'Bash integration requires a POSIX host')
+    def test_jidu6711_uses_the_6j11_image_set(self):
+        script = (
+            'DETECTED_MODEL=JIDU6711\n'
+            'eval "$(sed -n \'/^firmware_model()/,/^}/p\' flash.sh)"\n'
+            'firmware_model\n'
+        )
+        result = subprocess.run(['bash', '-c', script], cwd=ROOT,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '6j11')
+
 
 if __name__ == '__main__':
     unittest.main()

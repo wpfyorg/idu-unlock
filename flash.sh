@@ -190,7 +190,7 @@ firmware_model() {
   case "$DETECTED_MODEL" in
     JIDU6101) echo "6101" ;;
     JIDU6J01|JIDU6201|JIDU6401|JIDU6601|JIDU6701) echo "6j01" ;;
-    JIDU6J11|JIDU6111|JIDU6411|JIDU6611|JIDU6811|JIDU6911) echo "6j11" ;;
+    JIDU6J11|JIDU6111|JIDU6411|JIDU6611|JIDU6711|JIDU6811|JIDU6911) echo "6j11" ;;
     *)
       bad "no OpenWrt image set is registered for model: ${DETECTED_MODEL:-unknown}"
       return 1

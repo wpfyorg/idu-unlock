@@ -24,12 +24,12 @@ A complete, beginner-friendly walkthrough to unlock a **Jio AirFiber IDU / JIDU 
 | **JIDU6111** | Qualcomm `6j11` | Verified | Verified |
 | **JIDU6411** | Qualcomm `6j11` | Verified | Verified |
 | **JIDU6611** | Qualcomm `6j11` | Verified | Verified |
-| **JIDU6711** | Qualcomm `6j11` | Verified | Not verified |
+| **JIDU6711** | Qualcomm `6j11` | Verified | Verified |
 | **JIDU6811** | Qualcomm `6j11` | Verified | Verified |
 | **JIDU6911** | Qualcomm `6j11` | Verified | Verified |
 
 > [!NOTE]
-> **JIDU6711:** a user report confirms root SSH and backup on this model. The automated OpenWrt install has not been tried on a JIDU6711 yet.
+> **JIDU6711:** root SSH, backup, and the OpenWrt install are verified on this model. It uses the same `6j11` community image set as its siblings.
 
 Not sure which model is sitting under your desk?
 
