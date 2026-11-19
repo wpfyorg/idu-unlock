@@ -279,6 +279,8 @@ Root SSH is now available. If you built the backup with `--key`, the wrappers ca
 
 A password-protected `breeze` backup (one built without `--key`) does not work with the wrappers: they authenticate with a key or an empty password. Rebuild it with `--key`, or sign in with the password you set.
 
+Both commands probe root SSH first and skip the web login and the unlock checks when it answers. `flash` still saves a fresh backup before it writes anything.
+
 `backup` detects the existing root session instead of re-running the exploit.
 `flash` performs a fresh backup, downloads and verifies the matching images,
 and installs OpenWrt. Read [OPENWRT.md](../OPENWRT.md) before flashing.

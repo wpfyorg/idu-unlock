@@ -1874,6 +1874,9 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--no-banner", action="store_true",
                         default=argparse.SUPPRESS,
                         help="skip the model/vendor banner (the drivers print it once)")
+    parser.add_argument("--ssh-only", action="store_true", default=False,
+                        help="backup only: use existing root SSH, without a web "
+                             "API login or the unlock checks")
     subs = parser.add_subparsers(dest="command", required=True)
     subs.add_parser("detect", help="identify the model, change nothing")
 
@@ -1906,6 +1909,9 @@ def main(argv: list | None = None) -> int:
 
     backup_p = subs.add_parser("backup", help="credentials + partition images")
     backup_p.add_argument("--outdir", default=".")
+    backup_p.add_argument("--ssh-only", action="store_true",
+                          default=argparse.SUPPRESS,
+                          help="use existing root SSH, without a web API login")
     backup_p.add_argument("--no-banner", action="store_true",
                           default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     backup_p.add_argument("--full-chip", action="store_true",
@@ -1921,7 +1927,19 @@ def main(argv: list | None = None) -> int:
                key=getattr(args, "key", None), salt=args.salt, force=args.force)
         return 0
 
+    if args.ssh_only and args.command != "backup":
+        parser.error("--ssh-only is only valid with the backup command")
+
     api = Api(args.router)
+
+    # A unit that was opened by other means (breeze restore, UART) is already
+    # reachable over root SSH. Backup needs nothing from the web API, so this
+    # path skips the login, the version check and the unlock entirely.
+    if args.ssh_only:
+        if BANNER:
+            print(f"[+] Using existing root SSH on {api.host}")
+        backup(_shell_for(args.key, api.host), args.outdir, args.full_chip)
+        return 0
 
     # One session at a time: the backend permits a single admin login, so this
     # identifies the device and then releases the session before anything that

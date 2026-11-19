@@ -61,9 +61,9 @@ It does **not** remove a SIM/network lock, change IMEI or operator settings, or 
 | **`./flash.sh detect`** | Show model and hardware family | No |
 | **`./flash.sh check`** | Check firmware compatibility, read-only | No |
 | **`./flash.sh unlock`** | Enable persistent root SSH | Yes |
-| **`./flash.sh backup`** | Unlock if needed, then save a device backup | Yes |
+| **`./flash.sh backup`** | Unlock if needed — or go straight over live root SSH — then save a device backup | Yes |
 | **`./flash.sh download`** | Detect the model, download and verify its OpenWrt images | No firmware writes |
-| **`./flash.sh flash`** | Detect, unlock, back up, download, verify, install OpenWrt | Yes — destructive |
+| **`./flash.sh flash`** | Detect, unlock, back up, download, verify, install OpenWrt; live root SSH skips the first three | Yes — destructive |
 | **`./flash.sh`** | Same as `backup` | Yes |
 | **`./flash.sh breeze FILE`** | Offline: rebuild a web-UI config backup with root SSH | File only |
 
@@ -270,7 +270,9 @@ Run this before flashing OpenWrt:
 ./flash.sh backup
 ```
 
-The wrapper unlocks the router first if necessary, then saves a directory named after the router's Wi-Fi network. A typical backup looks like this:
+The wrapper unlocks the router first if necessary, then saves a directory named after the router's Wi-Fi network. If root SSH is already live — from a `breeze` restore, a UART setup, or an earlier unlock — it uses that session and skips the web login, the compatibility check, and the unlock entirely. Pass `--key` when that access is key-based; passwordless root needs nothing extra.
+
+A typical backup looks like this:
 
 ```text
 AirFiber-XXXXXX/
@@ -319,6 +321,8 @@ Then:
 > [!IMPORTANT]
 > Without `--key`, `breeze` sets a root password, and the wrappers authenticate with a key or an empty password — not that password. Either rebuild the backup with `--key`, or sign in to the router yourself with the password you set.
 
+Both `backup` and `flash` probe root SSH first: when the restored session answers, they skip the web login and the unlock checks and work over SSH. `flash` still saves a fresh backup before it writes anything.
+
 This is the same approach as the community [`breeze.sh`](https://github.com/abhigyan17/Airfiber_Unlock/blob/main/scripts/breeze.sh), built into this project. It never contacts the router and does not use the web API injection, so it also covers Qualcomm `6j11` units on early builds where the runtime probe reports no password history.
 
 Full walkthrough: [docs/BREEZE.md](docs/BREEZE.md).
@@ -333,7 +337,7 @@ On macOS/Linux, the normal path is one command:
 ./flash.sh flash
 ```
 
-That command detects the model, enables root SSH if needed, creates the stock backup, downloads and verifies the correct images, then hands off to the firmware installer. If you only want the files, run `./flash.sh download`.
+That command detects the model, enables root SSH if needed, creates the stock backup, downloads and verifies the correct images, then hands off to the firmware installer. When root SSH is already live it skips the detection and the unlock, backs up over SSH, and goes straight to the installer. If you only want the files, run `./flash.sh download`.
 
 Windows uses the lower-level firmware launcher directly:
 
@@ -448,7 +452,7 @@ The project release mirrors the files used by the manifest, so a moved upstream 
 
 - **Symptoms:** neither route is reported as available.
 - **Cause:** the build has both the password shell-out fixed and the DoS setters removed.
-- **Fix:** if the unit already has root SSH from another route, backup still works. Otherwise use `breeze` when the web UI offers Backup and Restore, or the UART/u-boot route documented for the model.
+- **Fix:** if the unit already has root SSH from another route, backup still works — and so does the install: `./flash.sh backup` and `./flash.sh flash` probe that SSH first and skip the web login and the unlock checks. Otherwise use `breeze` when the web UI offers Backup and Restore, or the UART/u-boot route documented for the model.
 
 ### 6. SSH Host Key Changed After a Reboot
 
