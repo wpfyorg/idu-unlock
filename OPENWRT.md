@@ -13,9 +13,12 @@
 >   routers die.
 > - **No warranty, no liability.** Provided as is — see the README.
 >
-> `./flash.sh flash` automates the supported SSH path: detect, unlock, backup,
-> download and verify the matching images, then perform the two-stage OpenWrt
-> install. This page also keeps the manual commands for recovery and debugging.
+> `./flash.sh flash` automates the supported SSH path: download and verify the
+> matching images, then perform the two-stage OpenWrt install. On a unit without
+> root SSH yet it first detects the model, unlocks, and backs it up; a unit that
+> is already unlocked is backed up and flashed straight over SSH. The flasher
+> refuses a wireless link, because the unit reboots mid-write. This page also
+> keeps the manual commands for recovery and debugging.
 
 ---
 

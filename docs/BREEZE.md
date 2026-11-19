@@ -51,10 +51,14 @@ the restore page. `breeze` works entirely on the file:
 
 1. decrypt the backup with OpenSSL and the stock key;
 2. set the root password hash in `etc/shadow`, or install your SSH public key;
-3. add `dropbear -p 0.0.0.0:22` to `etc/mwan3.user`, which stock firmware sources
-   when Dual WAN starts;
+3. start Dropbear from files the stock firmware already runs: `etc/rc.local`
+   (shells out from `init.d/done` at boot), `etc/firewall.user` (the `include`
+   fw3 runs on every firewall start, when `etc/config/firewall` points at it),
+   and `etc/mwan3.user` (sourced by mwan3 when Dual WAN is on, which the stock
+   UI often refuses to enable);
 4. add `/etc/init.d/idu-ssh` plus `S99`/`K01` links, so SSH survives later boots;
-5. repack and re-encrypt the archive as `encrypted_backup_mod.tar.gz`.
+5. repack with every entry owned by root, and re-encrypt the archive as
+   `encrypted_backup_mod.tar.gz`.
 
 Nothing is sent to the router until you upload the file in the web UI. No
 callback server, port 80, or admin API session is involved.
@@ -181,26 +185,26 @@ with the existing administrator password. Restoring the configuration does not
 change that web password; `breeze` changes only the **root** account used for
 SSH.
 
-## Step 6 — Start Dropbear with Dual WAN
+## Step 6 — Start Dropbear
 
-Some stock builds do not start Dropbear from the restored init script until a
-service reload. Dual WAN forces `mwan3` to run, and `mwan3` sources
-`/etc/mwan3.user`, which now starts Dropbear.
+The restore adds a Dropbear start to `/etc/rc.local` and `/etc/firewall.user`.
+The first runs when the stock `/etc/init.d/done` shells it out at boot; the
+second only when `/etc/config/firewall` includes `firewall.user`, and `breeze`
+writes it only when it does. On builds where those hooks run, connect now
+(Step 7) without touching the web UI.
 
-Log in to the web UI, then open:
+On units where neither hook runs, the fallback is **WAN → Dual WAN**
+(`https://192.168.31.1/#/WAN/DualWan`). The stock UI often refuses to save that
+toggle: `/sbin/jiodualwan.sh` only enables Dual WAN in `mod` mode, only when
+EoGre is off, and never on a JIDU6501, and it exits 1 without saying so in the
+UI. A toggle that will not stick is normal, not a fault.
 
-```text
-https://192.168.31.1/#/WAN/DualWan
-```
+If the toggle will not save either, connect over UART and start
+`dropbear -p 0.0.0.0:22` by hand; the troubleshooting section at the end of this
+page has that path.
 
-or navigate to **WAN → Dual WAN**. Enable Dual WAN, save, and let the router
-restart. It may restart more than once; wait for Ethernet to reconnect.
-
-After SSH works, **disable Dual WAN again**. It is only used to start Dropbear
-once and can interfere with normal WAN behavior.
-
-> If your build started SSH directly from the restored init script, you can skip
-> this step. Try Step 7 first; only enable Dual WAN if the connection is refused.
+If Dual WAN does get enabled, **disable it again** once SSH works. It is only
+used to start Dropbear and can interfere with normal WAN behavior.
 
 ## Step 7 — Log in as root
 
@@ -265,17 +269,34 @@ ln -sf ../init.d/idu-ssh /etc/rc.d/S99idu-ssh
 ln -sf ../init.d/idu-ssh /etc/rc.d/K01idu-ssh
 ```
 
-Do not rely on `/etc/rc.local` on these builds. The stock firmware has no
-`/etc/init.d/rc.local`, so an `exit 0` edit there does nothing.
+Do not rely on `/etc/rc.local` alone. It is a hook `breeze` adds because
+`/etc/init.d/done` shells it out at boot, but not every stock build ships that
+init script; `/etc/init.d/idu-ssh` is the part that is under our control.
 
 ## Step 9 — Back up, then install OpenWrt
 
-Root SSH is now available, so the normal project route works:
+This assumes the rebuilt `encrypted_backup_mod.tar.gz` has been restored through
+**Administration → Management → Restore Settings** (Step 5) and root SSH answers
+(Steps 6-8).
+
+If you built the backup with `--key`, the wrappers can use it:
 
 ```bash
-./flash.sh backup
-./flash.sh flash
+./flash.sh backup --key ~/.ssh/id_rsa
+./flash.sh flash --key ~/.ssh/id_rsa
 ```
+
+A password-protected `breeze` backup (one built without `--key`) is not usable by
+the wrappers directly: they sign in with a key or the passwordless `none` method.
+They fall back to the web-admin password, then run `unlock` and `backup` over the
+API, so the backup can still complete on a build with a working injection route.
+That `unlock` clears the root password `breeze` set. If you need that password,
+sign in with it before running the wrappers, or rebuild the backup with `--key`.
+
+On Windows, automatic unlock during firmware flashing requires `-Key`
+(`fwflash.ps1`); a password-only backup cannot drive it.
+
+Both commands probe root SSH first and skip the web login and the unlock checks when it answers. `flash` still saves a fresh backup before it writes anything.
 
 `backup` detects the existing root session instead of re-running the exploit.
 `flash` performs a fresh backup, downloads and verifies the matching images,
@@ -299,6 +320,14 @@ It prompts for a desired root password and a salt, then writes
 it is not the router administrator password. The script appends Dropbear to
 `/etc/mwan3.user` (or `/etc/firewall.user`) and leaves persistence to you.
 
+That is the part this project goes past: `mwan3.user` only runs while Dual WAN
+is on, and the stock UI refuses to enable it in most modes, so the community
+script can leave you with a restored backup and no SSH. `./flash.sh breeze` also
+writes `/etc/rc.local` (which `init.d/done` runs on every boot),
+`/etc/firewall.user` when `etc/config/firewall` includes it, the `S99idu-ssh`
+init script, and repacks with every entry owned by root so `sysupgrade -r` does
+not hand the restored files to the local user's uid.
+
 Project and script:
 
 - [abhigyan17/Airfiber_Unlock](https://github.com/abhigyan17/Airfiber_Unlock)
@@ -315,8 +344,17 @@ Confirm the file was produced by this command and was not renamed or edited
 afterwards. Re-run with `--force` if a stale output was reused.
 
 **SSH connection refused after the restore**
-Enable Dual WAN once (Step 6). If it still fails, connect over UART and start
+The restore starts Dropbear from `/etc/rc.local` and `/etc/firewall.user`, so
+this should not happen. If it does, the Dual WAN fallback in Step 6 is still
+available — but check first that `/etc/rc.local` and `/etc/init.d/idu-ssh`
+survived the restore, since the stock restorer only extracts what is in the
+archive. As a last resort, connect over UART and start
 `dropbear -p 0.0.0.0:22` by hand.
+
+**Dual WAN will not stay enabled**
+That is the stock firmware, not the modified backup: `jiodualwan.sh` refuses to
+enable Dual WAN outside `mod` mode, with EoGre on, and on a JIDU6501. You do not
+need it — `/etc/rc.local` starts Dropbear on every boot.
 
 **SSH asks for a password but the root password is rejected**
 Use the password set in Step 4. The web administrator password is separate.

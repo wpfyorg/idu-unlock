@@ -5,9 +5,9 @@
 #   ./flash.sh                 verify the router -> unlock root SSH -> back it up
 #   ./flash.sh check           can this unit be unlocked? (read-only, safe to run in bulk)
 #   ./flash.sh unlock          root SSH only (persistent, survives reboots)
-#   ./flash.sh backup          unlock if needed, then save the stock device data
+#   ./flash.sh backup          save device data; over root SSH when it is live
 #   ./flash.sh download        detect the model, download + verify its OpenWrt images
-#   ./flash.sh flash           backup first, then download + install OpenWrt
+#   ./flash.sh flash           backup, then download + install; SSH-first too
 #   ./flash.sh detect          identify the model, change nothing
 #   ./flash.sh breeze FILE     offline: rebuild a web-UI config backup with root
 #                              SSH, for R2.0.19.0 and older builds (no router
@@ -54,6 +54,7 @@ OUT="${OUT:-}"
 FORCE=0
 VERBOSE=0
 NOBANNER=0
+SSH_ONLY=0
 CMD=""
 BREEZE_FILE=""
 
@@ -136,25 +137,34 @@ fi
 # Optional, and never generated: a new unlock clears root's password with or without a key.
 
 # ---- password ------------------------------------------------------------ #
+# Asked for only by the web-API paths. A unit already reachable over root SSH is
+# driven over that session and needs no admin password at all.
+have_password() {
+  [ -n "$PASSWORD" ] && return 0
+  printf 'Router admin password: ' >&2
+  read -rs PASSWORD
+  echo >&2
+  [ -n "$PASSWORD" ] || { bad "no password given"; exit 2; }
+}
+
 # breeze works on a file, never on the router, so it needs no admin password.
 if [ "$CMD" = "breeze" ]; then
   [ -n "$BREEZE_FILE" ] || {
     bad "usage: ./flash.sh breeze <backup-file> [--root-password PW] [--key PATH]"
     exit 2
   }
-else
-  if [ -z "$PASSWORD" ]; then
-    printf 'Router admin password: '
-    read -rs PASSWORD
-    echo
-  fi
-  [ -n "$PASSWORD" ] || { bad "no password given"; exit 2; }
 fi
 
 # -u keeps Python's output unbuffered: piped through the driver it would
 # otherwise sit in a block buffer and make a slow login look like a hang.
 idu() {
-  local _args=( --router "$ROUTER" --password "$PASSWORD" )
+  local _args=( --router "$ROUTER" )
+  if [ "$SSH_ONLY" -eq 1 ]; then
+    _args+=( --ssh-only )
+  else
+    have_password
+    _args+=( --password "$PASSWORD" )
+  fi
   [ -n "$KEY" ] && _args+=( --key "$KEY" )
   [ -n "$ADDRESS" ] && _args+=( --address "$ADDRESS" )
   [ "$VERBOSE" -eq 1 ] && _args+=( --verbose )
@@ -168,7 +178,47 @@ idu() {
   fi
 }
 
+router_host() {
+  local rest="${ROUTER#*//}"
+  printf '%s\n' "${rest%%/*}" | cut -d: -f1
+}
+
+# Root SSH probe for units that were opened by other means (breeze restore,
+# UART). An unlock runs `passwd -d root`, so dropbear accepts the "none" method;
+# a key installed by unlock or breeze signs in with --key. Sets SSH_PROBE_MODEL.
+SSH_PROBE_MODEL=""
+stock_ssh_probe() {
+  local host attempt out
+  host="$(router_host)"
+  [ -n "$host" ] || return 1
+  SSH_PROBE_MODEL=""
+  local common=( -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                 -o ConnectTimeout=8 -o LogLevel=ERROR -o BatchMode=yes )
+  local attempts=( none )
+  local pubkey=( "${common[@]}" )
+  if [ -n "$KEY" ]; then
+    [ -f "$KEY" ] || return 1
+    attempts=( pubkey none )
+    pubkey=( -i "$KEY" -o IdentitiesOnly=yes "${common[@]}" )
+  fi
+  for attempt in "${attempts[@]}"; do
+    if [ "$attempt" = "pubkey" ]; then
+      out="$(ssh "${pubkey[@]}" "root@$host" 'cat /tmp/deviceModel' 2>/dev/null)"
+    else
+      out="$(ssh -o PubkeyAuthentication=no -o PreferredAuthentications=none \
+               "${common[@]}" "root@$host" 'cat /tmp/deviceModel' 2>/dev/null)"
+    fi
+    out="$(printf '%s' "$out" | tr -d '\r\n')"
+    if [ -n "$out" ]; then
+      SSH_PROBE_MODEL="$out"
+      return 0
+    fi
+  done
+  return 1
+}
+
 describe() {
+  have_password
   say "Connecting to ${ROUTER#*//}"
   local out
   if ! out="$(idu detect)"; then
@@ -190,7 +240,7 @@ firmware_model() {
   case "$DETECTED_MODEL" in
     JIDU6101) echo "6101" ;;
     JIDU6J01|JIDU6201|JIDU6401|JIDU6601|JIDU6701) echo "6j01" ;;
-    JIDU6J11|JIDU6111|JIDU6411|JIDU6611|JIDU6811|JIDU6911) echo "6j11" ;;
+    JIDU6J11|JIDU6111|JIDU6411|JIDU6611|JIDU6711|JIDU6811|JIDU6911) echo "6j11" ;;
     *)
       bad "no OpenWrt image set is registered for model: ${DETECTED_MODEL:-unknown}"
       return 1
@@ -244,6 +294,13 @@ case "$CMD" in
     ;;
 
   backup)
+    if stock_ssh_probe; then
+      DETECTED_MODEL="$SSH_PROBE_MODEL"
+      say "root SSH is live on $(router_host) - backing up over it, no web login"
+      SSH_ONLY=1
+      idu backup --outdir "$PWD" || exit 1
+      exit 0
+    fi
     describe
     idu unlock || exit 1
     idu backup --outdir "$PWD" || exit 1
@@ -259,6 +316,15 @@ case "$CMD" in
       bad "missing firmware flasher: $HERE/firmware/fwflash.sh"
       exit 1
     }
+    if stock_ssh_probe; then
+      DETECTED_MODEL="$SSH_PROBE_MODEL"
+      say "root SSH is live on $(router_host) - backing up, then flashing over it"
+      firmware_model >/dev/null || exit 1
+      SSH_ONLY=1
+      idu backup --outdir "$PWD" || exit 1
+      run_firmware flash || exit 1
+      exit 0
+    fi
     describe
     firmware_model >/dev/null || exit 1
     say "Unlock enables persistent root SSH. If flashing fails, stock may remain unlocked."

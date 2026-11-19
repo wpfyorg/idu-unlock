@@ -32,6 +32,11 @@ class FirmwareManifestTest(unittest.TestCase):
                     f"{name}: no alias names this model itself",
                 )
 
+    def test_jidu6711_is_a_6j11_alias(self):
+        # flash.sh maps the model to the 6j11 image set, and the flashers check
+        # the connected model against these aliases before writing anything.
+        self.assertIn("JIDU6711", self.data["models"]["6j11"]["aliases"])
+
     def test_roles_are_the_ones_the_flashers_ask_for(self):
         for name, spec in self.data["models"].items():
             with self.subTest(model=name):
@@ -153,6 +158,22 @@ class FlashScriptTest(unittest.TestCase):
         onrouter.mkdir(parents=True)
         cache.mkdir(parents=True)
         fake_bin.mkdir()
+
+        # fwflash waits for the interface that carried the stock connection to
+        # renumber onto the OpenWrt subnet before it talks to 192.168.1.1, so
+        # the fixture has to own that answer instead of the host' real routes.
+        (fake_bin / "route").write_text(
+            "#!/bin/sh\n"
+            'echo "   route to: $3"\n'
+            'echo "interface: fixture0"\n'
+        )
+        (fake_bin / "ifconfig").write_text(
+            "#!/bin/sh\n"
+            'echo "fixture0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500"\n'
+            'echo "\\tinet 192.168.1.23 netmask 0xffffff00 broadcast 192.168.1.255"\n'
+        )
+        os.chmod(fake_bin / "route", 0o755)
+        os.chmod(fake_bin / "ifconfig", 0o755)
 
         flasher = firmware / "fwflash.sh"
         shutil.copy2(ROOT / "firmware" / "fwflash.sh", flasher)
@@ -323,6 +344,44 @@ class FlashScriptTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("connected router is JIDU6J01, but the selected image set is 6101", output)
             self.assertFalse(trace.exists(), "model mismatch must stop before scp")
+
+    @unittest.skipIf(os.name == "nt", "Bash integration requires a POSIX host")
+    def test_bash_flasher_refuses_a_wireless_link_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            flasher, cache, fake_bin = self._bash_fixture(root)
+            trace = root / "scp.log"
+
+            # The fixture route lands on fixture0; claim it is the Wi-Fi port.
+            (fake_bin / "networksetup").write_text(
+                "#!/bin/sh\n"
+                'echo "Hardware Port: Wi-Fi"\n'
+                'echo "Device: fixture0"\n'
+            )
+            os.chmod(fake_bin / "networksetup", 0o755)
+
+            (fake_bin / "ssh").write_text(
+                "#!/usr/bin/env bash\n"
+                "for arg in \"$@\"; do last=\"$arg\"; done\n"
+                "case \"$last\" in\n"
+                "  'cat /proc/mtd >/dev/null') exit 0 ;;\n"
+                "  'cat /tmp/deviceModel 2>/dev/null') printf 'JIDU6101\\n'; exit 0 ;;\n"
+                "  *) exit 90 ;;\n"
+                "esac\n"
+            )
+            (fake_bin / "scp").write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n"
+            )
+            os.chmod(fake_bin / "ssh", 0o755)
+            os.chmod(fake_bin / "scp", 0o755)
+
+            result = self._run_bash_fixture(flasher, cache, fake_bin, trace)
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("is a wireless interface", output)
+            self.assertIn("connect Ethernet", output)
+            self.assertNotIn("uploading the factory image", output)
+            self.assertFalse(trace.exists(), "a Wi-Fi link must stop before scp")
 
     def test_powershell_flasher_rejects_wrong_model_before_any_upload(self):
         powershell = self._powershell_for_bash_stub_tests()

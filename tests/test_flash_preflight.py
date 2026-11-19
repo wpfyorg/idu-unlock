@@ -24,6 +24,11 @@ printf '%s\\n' "$*" >> "$TRACE"
 printf 'MODEL=UNKNOWN\\nFAMILY=unknown\\n'
 ''')
                 python.chmod(0o755)
+                # A real ssh on PATH must never be reached from this test: the
+                # SSH-first probe runs before the model check.
+                ssh = root / 'bin' / 'ssh'
+                ssh.write_text('#!/usr/bin/env bash\nexit 255\n')
+                ssh.chmod(0o755)
                 if not missing:
                     flasher = root / 'firmware' / 'fwflash.sh'
                     flasher.write_text('#!/usr/bin/env bash\nexit 0\n')
@@ -39,6 +44,51 @@ printf 'MODEL=UNKNOWN\\nFAMILY=unknown\\n'
                 self.assertNotIn('backup', calls)
                 self.assertIn('missing firmware flasher' if missing else 'no OpenWrt image set',
                               result.stdout + result.stderr)
+
+    @unittest.skipIf(os.name == 'nt', 'Bash integration requires a POSIX host')
+    def test_jidu6711_uses_the_6j11_image_set(self):
+        script = (
+            'DETECTED_MODEL=JIDU6711\n'
+            'eval "$(sed -n \'/^firmware_model()/,/^}/p\' flash.sh)"\n'
+            'firmware_model\n'
+        )
+        result = subprocess.run(['bash', '-c', script], cwd=ROOT,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '6j11')
+
+    @unittest.skipIf(os.name == 'nt', 'Bash integration requires a POSIX host')
+    def test_backup_uses_root_ssh_without_the_web_api(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / 'bin').mkdir()
+            shutil.copy2(ROOT / 'flash.sh', root / 'flash.sh')
+
+            ssh = root / 'bin' / 'ssh'
+            ssh.write_text('#!/usr/bin/env bash\necho "JIDU6711"\n')
+            ssh.chmod(0o755)
+
+            python = root / 'bin' / 'python3'
+            python.write_text(
+                '#!/usr/bin/env bash\n'
+                'if [ "$1" = "-c" ]; then exit 0; fi\n'
+                'printf "%s\\n" "$*" >> "$TRACE"\n')
+            python.chmod(0o755)
+
+            trace = root / 'calls'
+            env = dict(os.environ,
+                       PATH=f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                       TRACE=str(trace))
+            result = subprocess.run(
+                ['bash', str(root / 'flash.sh'), 'backup',
+                 '--router', 'https://192.168.31.77'],
+                cwd=root, env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0,
+                             result.stdout + result.stderr)
+            calls = trace.read_text()
+            self.assertIn('--ssh-only', calls)
+            self.assertIn('backup', calls)
+            self.assertNotIn('--password', calls)
 
 
 if __name__ == '__main__':

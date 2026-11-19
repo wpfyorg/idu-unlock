@@ -39,6 +39,11 @@ Windows Python and the Windows network. **WSL2 is not suitable for `unlock` or
 .\flash.ps1 backup --key $HOME\.ssh\idu_rsa   # unlock + backup
 ```
 
+If root SSH is already live on the unit (a `breeze` restore, a UART setup, or an
+earlier unlock), `backup` uses that session and skips the web login, the
+compatibility check and the unlock. No admin password is needed, and no key is
+needed while root is passwordless.
+
 Create the key first, as shown in [There is no `expect` on
 Windows](#there-is-no-expect-on-windows); `backup` needs it to verify the login.
 
@@ -65,6 +70,9 @@ key. Create one once and pass it:
 ssh-keygen -t rsa -b 2048 -f $HOME\.ssh\idu_rsa
 .\flash.ps1 backup --key $HOME\.ssh\idu_rsa
 ```
+
+This applies to the web-API unlock path. When root SSH is already live, `backup`
+drives that session, so a passwordless unit needs no key.
 
 Use RSA: the stock Dropbear on these units rejects Ed25519.
 

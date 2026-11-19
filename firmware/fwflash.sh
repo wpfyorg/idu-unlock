@@ -284,6 +284,64 @@ SCP_NEW=(scp -O -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$OWRT
 SSH_FINAL=(ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$FINAL_KNOWN_HOSTS" \
                -o LogLevel=ERROR -o ConnectTimeout=5 "root@$OPENWRT")
 
+# 192.168.1.1 is a very common LAN address. If the machine running this script
+# also reaches some other router there (a second unit on the home network, a
+# lab box behind the main gateway), that router answers while the unit we just
+# wrote has not renumbered yet, and the fingerprint check would fail against it
+# - safely, but after the stock slot was already replaced. So do not talk to
+# $OPENWRT until the interface that carried the stock connection has an address
+# on the OpenWrt subnet.
+#
+# The interface has to be recorded while the stock unit still answers: once the
+# unit reboots, $STOCK is gone and a route lookup returns the machine's default
+# interface instead (which is what a second router would sit behind).
+LINK_IFACE=""
+
+note_stock_link() {
+  [ -n "$LINK_IFACE" ] && return 0
+  LINK_IFACE="$(route -n get "$STOCK" 2>/dev/null | awk '/interface:/{print $2}')"   # macOS
+  [ -n "$LINK_IFACE" ] || LINK_IFACE="$(ip route get "$STOCK" 2>/dev/null \
+                              | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n 1)"
+}
+
+stock_link() {
+  local iface addr
+  note_stock_link
+  iface="$LINK_IFACE"
+  [ -n "$iface" ] || return 0   # unknown: keep the old behaviour
+  addr="$(ifconfig "$iface" 2>/dev/null | awk '/inet /{print $2}')"
+  [ -n "$addr" ] || addr="$(ip -4 -o addr show "$iface" 2>/dev/null \
+                            | awk '{print $4}' | cut -d/ -f1)"
+  # The interface can hold several addresses; only one on the OpenWrt subnet
+  # means the unit has renumbered. A single non-matching address still fails.
+  printf '%s\n' "${addr:-}" | grep -Eq '^192\.168\.1\.' && return 0
+  return 1
+}
+
+# Flashing over Wi-Fi loses the link the moment the unit reboots mid-write, which
+# is exactly what the README warns about but nothing enforced. Refuse unless the
+# stock unit is reached over a wired (or tunnelled) interface.
+is_wireless() {
+  local iface="$1"
+  [ -n "$iface" ] || return 1
+  [ -d "/sys/class/net/$iface/wireless" ] && return 0          # Linux
+  command -v networksetup >/dev/null 2>&1 || return 1          # macOS
+  networksetup -listallhardwareports 2>/dev/null \
+    | awk -v want="Device: $iface" '
+        /^Hardware Port:/ { port = substr($0, 16) }
+        $0 == want { print port }' \
+    | grep -Eqi 'wi-?fi|airport'
+}
+
+require_wired_link() {
+  [ "$DRY_RUN" = 1 ] && return 0
+  note_stock_link
+  [ -n "$LINK_IFACE" ] || return 0
+  is_wireless "$LINK_IFACE" || return 0
+  bad "$LINK_IFACE is a wireless interface"
+  die "flashing over Wi-Fi drops the link when the unit reboots; connect Ethernet"
+}
+
 # The MFG partition is factory data that survives both firmware stages and is
 # unique to the physical unit. Hash it instead of trusting the reused
 # 192.168.1.1 address to still belong to the router we validated on stock.
@@ -341,7 +399,8 @@ ensure_root_ssh() {
 }
 
 ensure_root_ssh
-
+note_stock_link      # before the reboot: afterwards $STOCK no longer resolves
+require_wired_link   # a Wi-Fi link dies with the unit, mid-write
 verify_connected_model() {
   local connected aliases
   if [ "$DRY_RUN" = 1 ]; then
@@ -397,12 +456,23 @@ if [ "$DRY_RUN" = 1 ]; then
 else
   say "waiting for OpenWrt on $OPENWRT (up to 3 minutes)"
   sshed=0
+  link_noted=0
   for _ in $(seq 1 40); do
+    if ! stock_link; then
+      if [ "$link_noted" = 0 ]; then
+        say "$LINK_IFACE has no 192.168.1.x address yet - waiting for the unit"
+        link_noted=1
+      fi
+      sleep 5
+      continue
+    fi
     if "${SSH_NEW[@]}" 'true' 2>"$SSH_ERR"; then sshed=1; break; fi
     sleep 5
   done
   if [ "$sshed" != 1 ]; then
     bad "no SSH on $OPENWRT after 200s"
+    [ "$link_noted" = 1 ] && bad \
+      "$LINK_IFACE never renumbered onto 192.168.1.0/24 - is the cable in a LAN port?"
     [ -s "$SSH_ERR" ] && bad "last error: $(tail -n 1 "$SSH_ERR")"
     die "the unit may need UART recovery: docs/models/ and firmware/README.md"
   fi
@@ -438,6 +508,7 @@ else
     # If we briefly reconnect to the initramfs before it goes down, do not pin
     # that host key for the next boot. The MFG hash is the continuity check.
     : > "$FINAL_KNOWN_HOSTS"
+    stock_link || { sleep 5; continue; }
     FINAL_MFG_HASH="$("${SSH_FINAL[@]}" "$MFG_ID_CMD" 2>"$SSH_ERR")" || {
       sleep 5
       continue

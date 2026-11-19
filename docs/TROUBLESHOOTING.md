@@ -51,17 +51,21 @@ The router locks out after ~5 failures. Wait, then double-check the password.
 <details>
 <summary><strong><code>check</code> reports NO</strong></summary>
 
-`NO` means the firmware is outside the vulnerable range — not that the router is
-unreachable. There are two cases:
+`NO` means neither of the two routes this tool uses is available — not that the
+router is unreachable. Specifically:
 
-- **Older than `R2.0.19` (MediaTek):** the build has no password-history hash at
-  all. The API still accepts a password change, but no shell evaluates it, which
-  is why a run can look successful and produce no callback.
-- **`R3.2.3` or newer (MediaTek):** the vendor replaced the shell-out with
-  `luci.sys.user.setpasswd`.
+- the `changeUserPassword` handler no longer runs a shell (older MediaTek builds
+  predate password history, and `R3.2.3` and newer replaced the shell-out with
+  `luci.sys.user.setpasswd`), **and**
+- `getDosPreventions` does not answer, so the DoS-prevention setter is absent
+  too.
 
-`unlock` refuses before sending a payload. On builds where the web UI still has
-**Backup Settings** and **Restore Settings**, use the offline
+When only the password route is closed, `check` reports `YES` and lists
+`setDosPreventions (icmpControl, R3.x)`; `unlock` tries that route automatically.
+No flag is needed.
+
+If both routes are unavailable and the web UI still has **Backup Settings** and
+**Restore Settings**, use the offline
 [`breeze` configuration-backup route](BREEZE.md) instead:
 
 ```bash
@@ -69,9 +73,10 @@ unreachable. There are two cases:
 ```
 
 It works on both families and needs no network route into the router. Restore
-the modified file, enable Dual WAN once to start Dropbear, then run
-`./flash.sh backup`. If the web UI has no restore page, the UART/u-boot console
-is the fallback.
+the modified file; it starts Dropbear from `/etc/rc.local`, so run
+`./flash.sh backup --key <your-key>` next without a web-UI step. Dual WAN is only
+a fallback on builds where that hook does not run. If the web UI has no restore
+page, the UART/u-boot console is the fallback.
 
 `NO` is a verdict about `changeUserPassword`, not a security audit of the
 firmware. `--force` is not a fix for a genuinely fixed build. It only helps when
@@ -88,9 +93,11 @@ it.
 password-history feature may or may not be present. It is not a failure.
 
 `unlock` decides at runtime by changing the guest password once and looking for
-a new history entry. If none appears, it stops with *this build does not record
-password history* and sends no payload. The guest password is now a random value;
-the admin password is untouched.
+a new history entry. If none appears, the password route stops with *this build
+does not record password history*. When the DoS route is available it still runs
+afterwards, changing the DoS-prevention settings (restored best-effort) and
+possibly installing SSH. The guest password is now a random value; the admin
+password is untouched.
 
 The windows are MediaTek `R2.0.19.0`–`R2.0.19.5` and `R3.2.1`–`R3.2.2`, and
 Qualcomm `R3.2.7` and newer. See
@@ -274,6 +281,58 @@ still enough to get root SSH first: download it, rebuild it with
 [BREEZE.md](BREEZE.md). If the web UI has no restore page, the UART/u-boot
 console is the fallback. Do not install OpenWrt first and plan to back up
 afterwards; the stock image is gone by then.
+
+</details>
+
+<details>
+<summary><strong>flashing refuses a wireless link</strong></summary>
+
+The unit reboots mid-write, so a Wi-Fi link dies before the install can finish.
+`firmware/fwflash.sh` stops before any write when it detects the stock connection
+on a wireless interface. The Windows launcher, `firmware/fwflash.ps1`, does not
+perform that check. Connect the computer to the unit by Ethernet even when the
+computer or a VM reaches the network over Wi-Fi, and do not rely on the check.
+Keep the cable in until OpenWrt is up at `192.168.1.1`.
+
+</details>
+
+<details>
+<summary><strong>"no SSH on 192.168.1.1" right after the stock slot was written</strong></summary>
+
+`192.168.1.1` is a very common address. If another router on your network also
+answers there (a second unit behind the main gateway, for example), that box can
+answer before the unit you just wrote has renumbered. `fwflash.sh` therefore
+waits until the interface that carried the stock connection holds an address on
+`192.168.1.0/24` before it connects.
+
+If it still times out, check that the Ethernet interface is on that subnet and
+that the unit booted:
+
+```bash
+ifconfig en6 | grep "inet "     # macOS; on Linux: ip -4 addr show <iface>
+ssh root@192.168.1.1 uptime
+```
+
+The unit is in OpenWrt initramfs at that point. Before copying anything, confirm
+the responder is the unit you flashed: compare its LAN MAC, or a host key you
+recorded, with the stock backup (the MAC is in `factory_env.txt`).
+
+```bash
+ssh root@192.168.1.1 'cat /sys/class/net/eth0/address'
+ssh-keyscan -t rsa 192.168.1.1
+```
+
+If neither matches what you recorded, stop: another device may be answering on
+`192.168.1.1`. Once it matches, copy the sysupgrade image and install it:
+
+```bash
+image=/path/to/<sysupgrade-image>
+scp -O "$image" root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 "sysupgrade -n /tmp/$(basename "$image")"
+```
+
+See [OPENWRT.md](../OPENWRT.md) for the image names, the checks, and the UART
+recovery path.
 
 </details>
 
