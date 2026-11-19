@@ -24,6 +24,11 @@ printf '%s\\n' "$*" >> "$TRACE"
 printf 'MODEL=UNKNOWN\\nFAMILY=unknown\\n'
 ''')
                 python.chmod(0o755)
+                # A real ssh on PATH must never be reached from this test: the
+                # SSH-first probe runs before the model check.
+                ssh = root / 'bin' / 'ssh'
+                ssh.write_text('#!/usr/bin/env bash\nexit 255\n')
+                ssh.chmod(0o755)
                 if not missing:
                     flasher = root / 'firmware' / 'fwflash.sh'
                     flasher.write_text('#!/usr/bin/env bash\nexit 0\n')

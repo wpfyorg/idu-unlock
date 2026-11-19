@@ -36,15 +36,26 @@ def unpack(archive, destination):
         handle.extractall(destination)
 
 
-def make_config_backup(base, mwan3=True):
+def make_config_backup(base, mwan3=True, rc_local=True, firewall_include=True):
     source = pathlib.Path(base) / "source"
-    (source / "etc").mkdir(parents=True)
+    (source / "etc" / "config").mkdir(parents=True)
     (source / "etc" / "shadow").write_text(
         "root:$1$old$abcd:19000:0:99999:7:::\n"
         "guest:x:0:0:99999:7:::\n")
     os.chmod(source / "etc" / "shadow", 0o600)
     if mwan3:
         (source / "etc" / "mwan3.user").write_text("#!/bin/sh\n")
+    if rc_local:
+        (source / "etc" / "rc.local").write_text(
+            "#!/bin/sh\n"
+            "echo boot\n"
+            "exit 0\n")
+    (source / "etc" / "config" / "firewall").write_text(
+        "config defaults\n"
+        "\toption input 'ACCEPT'\n")
+    if firewall_include:
+        with open(source / "etc" / "config" / "firewall", "a") as handle:
+            handle.write("\nconfig include\n\toption path '/etc/firewall.user'\n")
     (source / "etc" / "resolv.conf").symlink_to("/tmp/resolv.conf.auto")
 
     plain = pathlib.Path(base) / "plain.tar.gz"
@@ -89,9 +100,19 @@ class BreezeTests(unittest.TestCase):
         self.assertIn("guest:x:0:0:99999:7:::", shadow)
 
         mwan3 = (root / "etc" / "mwan3.user").read_text()
-        self.assertEqual(mwan3.count("dropbear -p 0.0.0.0:22"), 1)
+        self.assertIn(idu.DROPBEAR_START, mwan3)
         self.assertTrue(mwan3.startswith("#!/bin/sh\n"))
-        self.assertEqual(mwan3.count("\n"), 2)
+
+        # rc.local is the hook that does not depend on Dual WAN, and the restore
+        # must not swallow the vendor's own `exit 0`.
+        rc_local = (root / "etc" / "rc.local").read_text()
+        self.assertIn(idu.DROPBEAR_START, rc_local)
+        self.assertLess(rc_local.index(idu.DROPBEAR_START),
+                        rc_local.index("exit 0"))
+        self.assertIn("echo boot", rc_local)
+
+        firewall_user = (root / "etc" / "firewall.user").read_text()
+        self.assertIn(idu.DROPBEAR_START, firewall_user)
 
         init = root / "etc" / "init.d" / "idu-ssh"
         self.assertTrue(init.exists())
@@ -137,8 +158,42 @@ class BreezeTests(unittest.TestCase):
         self.run_breeze(backup, out=str(output), root_password="CorrectHorse9")
 
         root = self.rebuilt(output)
-        self.assertIn("dropbear -p 0.0.0.0:22",
+        self.assertIn(idu.DROPBEAR_START,
                       (root / "etc" / "mwan3.user").read_text())
+
+    def test_creates_rc_local_when_the_backup_has_none(self):
+        backup = make_config_backup(self.temp, rc_local=False)
+        output = self.temp / "mod.tar.gz"
+
+        self.run_breeze(backup, out=str(output), root_password="CorrectHorse9")
+
+        rc_local = (self.rebuilt(output) / "etc" / "rc.local").read_text()
+        self.assertIn(idu.DROPBEAR_START, rc_local)
+
+    def test_leaves_firewall_user_alone_when_firewall_does_not_include_it(self):
+        backup = make_config_backup(self.temp, firewall_include=False)
+        output = self.temp / "mod.tar.gz"
+
+        self.run_breeze(backup, out=str(output), root_password="CorrectHorse9")
+
+        root = self.rebuilt(output)
+        self.assertFalse((root / "etc" / "firewall.user").exists())
+        self.assertIn(idu.DROPBEAR_START,
+                      (root / "etc" / "rc.local").read_text())
+
+    def test_rebuilt_entries_belong_to_root(self):
+        backup = make_config_backup(self.temp)
+        output = self.temp / "mod.tar.gz"
+
+        self.run_breeze(backup, out=str(output), root_password="CorrectHorse9")
+
+        decrypted = self.temp / "owned.tar.gz"
+        decrypt(output, decrypted)
+        with tarfile.open(decrypted, "r:gz") as archive:
+            members = archive.getmembers()
+        self.assertTrue(members)
+        for member in members:
+            self.assertEqual((member.uid, member.gid), (0, 0), member.name)
 
     def test_refuses_to_overwrite_the_original_backup(self):
         backup = make_config_backup(self.temp)

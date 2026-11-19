@@ -317,7 +317,7 @@ It decrypts the stock configuration backup, installs your public key (or sets a 
 Then:
 
 1. restore that file in the router web UI;
-2. enable Dual WAN once if the build needs it to start SSH;
+2. connect as root — the restore starts Dropbear from `/etc/rc.local` and `/etc/firewall.user`, so no web-UI step is needed. **WAN → Dual WAN** is only a fallback on builds where those hooks do not run;
 3. continue with `./flash.sh backup --key ~/.ssh/idu_rsa` or `./flash.sh flash --key ~/.ssh/idu_rsa`.
 
 > [!IMPORTANT]
@@ -339,7 +339,7 @@ On macOS/Linux, the normal path is one command:
 ./flash.sh flash
 ```
 
-That command detects the model, enables root SSH if needed, creates the stock backup, downloads and verifies the correct images, then hands off to the firmware installer. When root SSH is already live it skips the detection and the unlock, backs up over SSH, and goes straight to the installer. If you only want the files, run `./flash.sh download`.
+That command detects the model, enables root SSH if needed, creates the stock backup, downloads and verifies the correct images, then hands off to the firmware installer. When root SSH is already live it skips the detection and the unlock, backs up over SSH, and goes straight to the installer. Flashing over a Wi-Fi link is refused: the unit reboots mid-write and the connection dies, so use Ethernet. If you only want the files, run `./flash.sh download`.
 
 Windows uses the lower-level firmware launcher directly:
 

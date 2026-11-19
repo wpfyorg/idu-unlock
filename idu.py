@@ -89,6 +89,13 @@ stop()  { killall dropbear; }
 reload() { start; }
 """
 
+# The line breeze drops into a file the stock firmware already sources. Guarded:
+# mwan3.user fires on every interface event and firewall.user on every reload, so
+# an unguarded line would leave a trail of failed daemons behind. The pattern
+# matches both our `dropbear -p` and the init script's `dropbear -R -p`.
+DROPBEAR_START = ('ps w 2>/dev/null | grep -q "[d]ropbear -" '
+                  '|| dropbear -p 0.0.0.0:22')
+
 # Set by --verbose in main(): adds the per-command detail behind each step.
 VERBOSE = False
 
@@ -908,11 +915,12 @@ class Verdict:
     test_required: bool = False
     method_closed: bool = False
     dos_available: bool = False
+    dos_unknown: bool = False
 
     @property
     def unlockable(self) -> bool:
         return bool(self.vectors) and (
-            self.dos_available
+            self.dos_available or self.dos_unknown
             or (not self.test_required and not self.method_closed))
 
 
@@ -995,6 +1003,7 @@ def check(api: Api) -> Verdict:
     method_closed = False
     test_required = False
     dos_available = False
+    dos_unknown = False
 
     if release is None:
         vectors.append(PasswordVector.name)
@@ -1033,17 +1042,25 @@ def check(api: Api) -> Verdict:
     # The DoS setters ship alongside the read-only getter, and the field they
     # copy has no length cap. This probe only reads: presence is the signal,
     # and `unlock` is what confirms the setter actually executes.
-    dos = api.call("getDosPreventions")
-    if Api._ok(dos):
-        vectors.append(DosPreventionVector.name)
-        dos_available = True
-        evidence.append("getDosPreventions present -> DoS setters registered")
+    try:
+        dos = api.call("getDosPreventions")
+    except IduError as problem:
+        # A failed probe says nothing about the route. Keep the password
+        # verdict, and let unlock try the DoS vector blind.
+        dos_unknown = True
+        evidence.append(f"DoS probe failed ({problem}); route untested")
     else:
-        evidence.append("DoS module absent")
+        if Api._ok(dos):
+            vectors.append(DosPreventionVector.name)
+            dos_available = True
+            evidence.append("getDosPreventions present -> DoS setters registered")
+        else:
+            evidence.append("DoS module absent")
 
     return Verdict(model=model, firmware=version, vectors=vectors,
                    evidence=evidence, test_required=test_required,
-                   method_closed=method_closed, dos_available=dos_available)
+                   method_closed=method_closed, dos_available=dos_available,
+                   dos_unknown=dos_unknown)
 
 
 def _shell_for(key: str | None, host: str) -> Shell:
@@ -1091,7 +1108,7 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
         return
 
     if verdict and verdict.method_closed and not force \
-            and not verdict.dos_available:
+            and not verdict.dos_available and not verdict.dos_unknown:
         detail = (verdict.evidence[0] if verdict.evidence
                   else "both injection routes are unavailable on this firmware")
         raise UnsupportedFirmware(
@@ -1133,7 +1150,7 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
     vectors: list[Vector] = []
     if not verdict or not verdict.method_closed or force:
         vectors.append(PasswordVector(force=force))
-    if not verdict or verdict.dos_available:
+    if not verdict or verdict.dos_available or verdict.dos_unknown:
         vectors.append(DosPreventionVector())
     total = len(vectors)
 
@@ -1560,7 +1577,8 @@ def backup(shell: Shell, outdir: str, include_full_chip: bool = False) -> str:
 #
 #   1. decrypt the backup with the vendor's fixed passphrase;
 #   2. set a root password hash (or install an authorized key);
-#   3. arrange for Dropbear to start once Dual WAN brings mwan3 up, and on boot;
+#   3. arrange for Dropbear to start from hooks the firmware already runs, and on
+#      boot (Dual WAN is not required — the stock UI often refuses to enable it);
 #   4. repack and re-encrypt it as a file the stock UI will restore.
 #
 # Everything here is local. No router session, no network, no port 80.
@@ -1721,6 +1739,68 @@ def _append_line(path: str, line: str) -> None:
     _write_text(path, existing + line + "\n", 0o755)
 
 
+def _insert_before_exit(path: str, line: str) -> None:
+    """Add a line to a shell file, ahead of its trailing ``exit 0``."""
+    existing = ""
+    if os.path.exists(path):
+        with open(path, encoding="utf-8", errors="surrogateescape") as handle:
+            existing = handle.read()
+    if line in existing.splitlines():
+        return
+    lines = existing.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].strip() == "exit 0":
+            lines.insert(index, line)
+            break
+    else:
+        lines.append(line)
+    _write_text(path, "\n".join(lines) + "\n", 0o755)
+
+
+def _install_start_hooks(root: str) -> None:
+    """Arrange for Dropbear to start without the web UI.
+
+    ``mwan3.user`` only runs while Dual WAN is on, and the stock UI often refuses
+    to turn Dual WAN on: ``/sbin/jiodualwan.sh`` gates it on the IDU mode
+    (``mod``/``ont``/``odu``), on EoGre being off, and on the model, and exits 1
+    otherwise, so the toggle silently does not save. The restore therefore has
+    to bring SSH up on its own:
+
+    - ``/etc/rc.local`` runs on every boot (``init.d/done`` shells it out), and
+      the vendor's own keep list carries it through a config backup;
+    - ``/etc/firewall.user`` is the ``include`` fw3 runs on every firewall
+      start, when the firmware's ``/etc/config/firewall`` points at it;
+    - ``/etc/mwan3.user`` stays as the last resort, for builds where Dual WAN
+      does work.
+    """
+    _insert_before_exit(os.path.join(root, "etc", "rc.local"), DROPBEAR_START)
+
+    firewall_config = _backup_path(root, "etc/config/firewall")
+    if firewall_config is not None:
+        with open(firewall_config, encoding="utf-8",
+                  errors="surrogateescape") as handle:
+            includes_it = "firewall.user" in handle.read()
+        if includes_it:
+            _append_line(os.path.join(root, "etc", "firewall.user"),
+                         DROPBEAR_START)
+
+    _append_line(os.path.join(root, "etc", "mwan3.user"), DROPBEAR_START)
+
+
+def _as_root(member: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Give every entry to root.
+
+    ``sysupgrade -r`` restores with ``tar -C / -xzf`` as root, so the archive's
+    owner is what the router ends up with. Repacking on a laptop would otherwise
+    hand /etc/shadow, /root/.ssh and the init scripts to an unrelated uid.
+    """
+    member.uid = 0
+    member.gid = 0
+    member.uname = "root"
+    member.gname = "root"
+    return member
+
+
 def _ask_root_password() -> str:
     first = getpass.getpass("New root password: ")
     second = getpass.getpass("Repeat: ")
@@ -1783,11 +1863,9 @@ def breeze(source: str, out: str | None = None, root_password: str | None = None
         if public_key:
             _install_key(root, public_key)
 
-        # Dual WAN starts mwan3, and mwan3 sources this file. That gives the
-        # first Dropbear process without a shell. The init script then keeps
-        # SSH alive across later boots (the stock firmware has no rc.local).
-        _append_line(os.path.join(root, "etc", "mwan3.user"),
-                     "dropbear -p 0.0.0.0:22")
+        # Dual WAN is not required: see _install_start_hooks. These are the paths
+        # the stock firmware already executes on its own.
+        _install_start_hooks(root)
 
         init = os.path.join(root, "etc", "init.d", "idu-ssh")
         _write_text(init, IDU_SSH_INIT, 0o755)
@@ -1802,7 +1880,8 @@ def breeze(source: str, out: str | None = None, root_password: str | None = None
         modified = os.path.join(work, "backup_mod.tar.gz")
         with tarfile.open(modified, "w:gz") as archive:
             for name in sorted(os.listdir(root)):
-                archive.add(os.path.join(root, name), arcname=f"./{name}")
+                archive.add(os.path.join(root, name), arcname=f"./{name}",
+                            filter=_as_root)
 
         _encrypt_backup(modified, out)
         os.chmod(out, 0o600)
@@ -1810,9 +1889,21 @@ def breeze(source: str, out: str | None = None, root_password: str | None = None
             verify = os.path.join(work, "verify.tar.gz")
             _decrypt_backup(out, verify)
             with tarfile.open(verify, "r:gz") as archive:
-                names = archive.getnames()
-            if not any(name.rstrip("/").endswith("etc/shadow") for name in names):
-                raise IduError("the rebuilt backup did not contain etc/shadow")
+                members = archive.getmembers()
+                names = [member.name for member in members]
+                if not any(name.rstrip("/").endswith("etc/shadow")
+                           for name in names):
+                    raise IduError("the rebuilt backup did not contain etc/shadow")
+                if any(member.uid or member.gid for member in members):
+                    raise IduError(
+                        "the rebuilt backup has entries owned by the local user")
+                rc_local = next((name for name in names
+                                 if name.rstrip("/").endswith("etc/rc.local")), None)
+                handle = archive.extractfile(rc_local) if rc_local else None
+                body = handle.read().decode("utf-8", "replace") if handle else ""
+            if DROPBEAR_START not in body:
+                raise IduError(
+                    "the rebuilt backup would not start Dropbear on boot")
         except Exception:
             with contextlib.suppress(FileNotFoundError):
                 os.remove(out)
@@ -1835,7 +1926,10 @@ def breeze(source: str, out: str | None = None, root_password: str | None = None
         print("     Enter the root password you just set.")
     print("     If SSH is refused, log in to the web UI, open")
     print("     https://192.168.31.1/#/WAN/DualWan, enable Dual WAN and save.")
-    print("     That starts Dropbear; disable Dual WAN again once SSH works.")
+    print("     Most builds do not need it: the restore now starts Dropbear from")
+    print("     /etc/rc.local and /etc/firewall.user, and the Dual WAN page may")
+    print("     refuse to save (it is gated on the IDU mode). Disable Dual WAN")
+    print("     again once SSH works.")
     print("  4. Verify root access:")
     print("       whoami")
     print("     It should print: root")
@@ -1965,18 +2059,22 @@ def main(argv: list | None = None) -> int:
                     "test_required": verdict.test_required,
                     "method_closed": verdict.method_closed,
                     "dos_available": verdict.dos_available,
+                    "dos_unknown": verdict.dos_unknown,
                     "vectors": verdict.vectors, "evidence": verdict.evidence,
                 }))
             else:
                 state = ("NO" if verdict.method_closed and not verdict.dos_available
-                         else "TEST" if verdict.test_required
-                         and not verdict.dos_available else "YES")
+                         and not verdict.dos_unknown
+                         else "TEST" if verdict.dos_unknown or (
+                             verdict.test_required and not verdict.dos_available)
+                         else "YES")
                 print(f"[+] unlockable: {state}"
                       + (f"  via {', '.join(verdict.vectors)}"
                          if verdict.vectors else ""))
                 for line in verdict.evidence:
                     print(f"    - {line}")
-                if verdict.method_closed and not verdict.dos_available:
+                if verdict.method_closed and not verdict.dos_available \
+                        and not verdict.dos_unknown:
                     print("    - both known routes are unavailable: the "
                           "password handler is fixed, and the DoS module is absent")
                     print("    - if the web UI still offers Backup and Restore, "

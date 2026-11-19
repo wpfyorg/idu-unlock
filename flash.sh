@@ -216,6 +216,7 @@ stock_ssh_probe() {
 }
 
 describe() {
+  have_password
   say "Connecting to ${ROUTER#*//}"
   local out
   if ! out="$(idu detect)"; then

@@ -79,10 +79,12 @@ The embedded device tree contains the fixed SPI-NAND pull-up/pull-down settings,
 and both the temporary system and permanent sysupgrade identify as
 `jiorouter_ax6000-jidu6101`, so no forced `sysupgrade -F` is needed.
 
-`./flash.sh flash` detects 6101, unlocks root SSH if needed, backs up the stock
-partitions, downloads and verifies the matching images, writes the `ubi2` spare
-slot, then installs the official 25.12.6 sysupgrade. UART + TFTP remains the
-recovery path.
+`./flash.sh flash` backs up the stock partitions, downloads and verifies the
+matching images, writes the `ubi2` spare slot, then installs the official 25.12.6
+sysupgrade. On a unit that has no root SSH yet it first detects 6101 and unlocks
+it; one that is already unlocked is backed up and flashed straight over SSH. The
+flasher refuses a wireless link, because the unit reboots mid-write. UART + TFTP
+remains the recovery path.
 
 ## Where the images come from
 

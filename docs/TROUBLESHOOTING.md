@@ -73,9 +73,10 @@ If both routes are unavailable and the web UI still has **Backup Settings** and
 ```
 
 It works on both families and needs no network route into the router. Restore
-the modified file, enable Dual WAN once to start Dropbear, then run
-`./flash.sh backup`. If the web UI has no restore page, the UART/u-boot console
-is the fallback.
+the modified file; it starts Dropbear from `/etc/rc.local`, so run
+`./flash.sh backup --key <your-key>` next without a web-UI step. Dual WAN is only
+a fallback on builds where that hook does not run. If the web UI has no restore
+page, the UART/u-boot console is the fallback.
 
 `NO` is a verdict about `changeUserPassword`, not a security audit of the
 firmware. `--force` is not a fix for a genuinely fixed build. It only helps when
@@ -280,6 +281,39 @@ still enough to get root SSH first: download it, rebuild it with
 [BREEZE.md](BREEZE.md). If the web UI has no restore page, the UART/u-boot
 console is the fallback. Do not install OpenWrt first and plan to back up
 afterwards; the stock image is gone by then.
+
+</details>
+
+<details>
+<summary><strong>flashing refuses a wireless link</strong></summary>
+
+The unit reboots mid-write, so a Wi-Fi link dies before the install can finish.
+`firmware/fwflash.*` stops before any write when the stock connection is on a
+wireless interface. Connect Ethernet (a USB adapter is fine), retry, and keep the
+cable in until OpenWrt is up at `192.168.1.1`.
+
+</details>
+
+<details>
+<summary><strong>"no SSH on 192.168.1.1" right after the stock slot was written</strong></summary>
+
+`192.168.1.1` is a very common address. If another router on your network also
+answers there (a second unit behind the main gateway, for example), that box can
+answer before the unit you just wrote has renumbered. `fwflash.sh` therefore
+waits until the interface that carried the stock connection holds an address on
+`192.168.1.0/24` before it connects.
+
+If it still times out, check that the Ethernet interface is on that subnet and
+that the unit booted:
+
+```bash
+ifconfig en6 | grep "inet "     # macOS; on Linux: ip -4 addr show <iface>
+ssh root@192.168.1.1 uptime
+```
+
+The unit is in OpenWrt initramfs at that point and nothing is lost: finish with
+`firmware/fwflash.sh <model> --router 192.168.1.1` once the address resolves to
+the unit, or over UART.
 
 </details>
 

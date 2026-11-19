@@ -21,18 +21,21 @@ class FakeApi:
     """Records the calls the vector makes, and answers the two read probes."""
 
     def __init__(self, version="SRCMJIO_JIDU6601_R3.2.3", model="JIDU6601",
-                 dos=True, baseline=None, fail_restore=False):
+                 dos=True, baseline=None, fail_restore=False, dos_error=False):
         self.device = idu.Device(model, "Arcadyan", "test", {})
         self.version = version
         self.dos = dos
         self.baseline = dict(baseline or DOS_BASELINE)
         self.fail_restore = fail_restore
+        self.dos_error = dos_error
         self.mutations = []
 
     def call(self, method, params=None):
         if method == "getFirmwareDetails":
             return {"results": {"firmwareVersion": self.version}}
         if method == "getDosPreventions":
+            if self.dos_error:
+                raise idu.IduError("probe timed out")
             if not self.dos:
                 return {"code": "ERR_UNKNOWN_METHOD", "message": "no such method"}
             return {"status": "OK", "results": dict(self.baseline)}
@@ -68,8 +71,18 @@ class CheckTests(unittest.TestCase):
         verdict = idu.check(FakeApi(version="SRCMJIO_JIDU6601_R3.2.3", dos=False))
         self.assertTrue(verdict.method_closed)
         self.assertFalse(verdict.dos_available)
+        self.assertFalse(verdict.dos_unknown)
         self.assertFalse(verdict.unlockable)
         self.assertNotIn(idu.DosPreventionVector.name, verdict.vectors)
+
+    def test_a_failed_dos_probe_keeps_the_password_verdict(self):
+        verdict = idu.check(FakeApi(version="SRCMJIO_JIDU6601_R3.2.0",
+                                    dos_error=True))
+        self.assertIn(idu.PasswordVector.name, verdict.vectors)
+        self.assertFalse(verdict.dos_available)
+        self.assertTrue(verdict.dos_unknown)
+        self.assertTrue(verdict.unlockable)
+        self.assertIn("DoS probe failed", " ".join(verdict.evidence))
 
 
 class ExecuteTests(unittest.TestCase):
