@@ -92,9 +92,11 @@ it.
 password-history feature may or may not be present. It is not a failure.
 
 `unlock` decides at runtime by changing the guest password once and looking for
-a new history entry. If none appears, it stops with *this build does not record
-password history* and sends no payload. The guest password is now a random value;
-the admin password is untouched.
+a new history entry. If none appears, the password route stops with *this build
+does not record password history*. When the DoS route is available it still runs
+afterwards, changing the DoS-prevention settings (restored best-effort) and
+possibly installing SSH. The guest password is now a random value; the admin
+password is untouched.
 
 The windows are MediaTek `R2.0.19.0`–`R2.0.19.5` and `R3.2.1`–`R3.2.2`, and
 Qualcomm `R3.2.7` and newer. See

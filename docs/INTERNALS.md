@@ -255,9 +255,12 @@ once to a random literal and re-reads the guest record:
 - a new `passwdHistory` entry means `savePasswdHistory` ran, so this build has
   the vulnerable hash shell-out;
 - no entry means the history write is absent. On the builds examined, the
-  vulnerable shell-out is absent too: `unlock` raises `UnsupportedFirmware` and
-  sends no payload. The guest password has changed to a random value, but the
-  admin account and everything else are untouched.
+  vulnerable shell-out is absent too, so the password route stops and raises
+  `UnsupportedFirmware`. That refusal covers the password route only: when the
+  DoS setter is available, `unlock` still sends the DoS payload afterwards,
+  which changes the DoS-prevention settings (restored best-effort) and can
+  install persistent SSH. The guest password has changed to a random value; the
+  admin password is untouched.
 
 `--force` turns that stop into a warning, for a build where the history
 functions might be split across releases. The probe still runs, and the

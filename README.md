@@ -2,7 +2,7 @@
 
 A complete, beginner-friendly walkthrough to unlock a **Jio AirFiber IDU / JIDU AX6000 router**, keep persistent root SSH, save a full device backup, and install OpenWrt — all over the network, without opening the case or soldering a UART header.
 
-`./flash.sh` is the entry point. It detects the router, checks the firmware, unlocks root SSH, saves the backup, downloads verified images, and installs OpenWrt.
+`./flash.sh` is the entry point for detect, check, unlock, and backup. `./flash.sh flash` is the one that downloads verified images and installs OpenWrt.
 
 > [!IMPORTANT]
 > **Use the e-waste you already have at home.** This project exists to give an unused Jio IDU a second life, not to create a buy/sell market around unlocked routers. Please do not buy hardware just to flip it at a markup.
@@ -44,7 +44,7 @@ Per-model notes live in [docs/models](docs/models/README.md).
 - **Detects the model and hardware family:** tells you which install path applies before anything is changed.
 - **Checks firmware compatibility:** `check` reports whether an injection route is present.
 - **Enables persistent root SSH:** survives reboots, not just the current session.
-- **Saves factory credentials and every partition:** an imaged backup you can restore from.
+- **Saves factory credentials and the flash partitions:** an imaged backup you can restore from. The default skips `mtd0`, the full SPI-chip image.
 - **Rebuilds a web-UI config backup offline:** for early builds where the live API route is closed.
 - **Downloads and verifies OpenWrt images:** every file is SHA-256 checked against a pinned manifest.
 - **Installs OpenWrt automatically:** two-stage flash over SSH, no serial console needed.
@@ -96,7 +96,7 @@ sudo sysctl net.ipv4.ip_unprivileged_port_start=80
 
 ### 3. The Router Must Be Set Up, Not Factory-Fresh
 
-A factory-reset JIDU accepts the login but keeps its whole API locked (`ERR_POSTLOGIN_FACTORY_RESET`) until the setup wizard is finished in the web UI. Reset it, complete the wizard (which sets the admin password), then hand that password to this tool.
+A factory-reset JIDU accepts the login but keeps its whole API locked (`ERR_POSTLOGIN_FACTORY_RESET`) until the setup wizard is finished in the web UI. If your router is already in that state, complete the wizard (which sets the admin password), then hand that password to this tool. Do not reset a configured router to reach this step.
 
 ### 4. One Admin Session at a Time
 
@@ -189,21 +189,23 @@ The version table below is a first filter for the **`changeUserPassword`** route
 
 \* `6j11` has confirmed working units through `R3.2.6`. Very old releases may predate the password-history behavior, so the runtime probe is still the final check.
 
-### 🧪 What `unlock` Does on an Unconfirmed Build
+### 🧪 What `unlock` Does When the Password Route Is Unconfirmed
 
-`R2.0.19.0` reports `TEST`, not a refusal. No rootfs between `R2.0.19.0` and `R2.0.19.6` has been read, so `./flash.sh unlock` checks the live behaviour before sending anything:
+No rootfs between `R2.0.19.0` and `R2.0.19.6` has been read, so the version table cannot settle that window. `check` reports `YES` when `getDosPreventions` answers, because the DoS route is available, and `TEST` otherwise. Either way, `./flash.sh unlock` checks the password route live before sending a password payload:
 
 1. it changes the guest password once to a random value;
-2. if the guest's `passwdHistory` gains an entry, the vulnerable shell-out is present and the normal payloads are sent;
-3. if no entry appears, it stops, sends no payload, and leaves the admin password unchanged — the guest password is simply random now.
+2. if the guest's `passwdHistory` gains an entry, the vulnerable shell-out is present and the normal password payloads are sent;
+3. if no entry appears, the password route stops there. When the DoS route is available, `unlock` still sends its payload afterwards — that request changes the DoS-prevention settings, which are put back best-effort, and can start SSH and install persistence.
 
-`--force` sends the payloads even when the probe finds no history, but they are inert on a build without the shell-out. Use the offline `breeze` route for those units, or UART if the web UI has no restore page.
+The admin password is never changed, and the guest password is simply random now. `--force` makes step 3 send the password payloads anyway; they are inert on a build without the shell-out.
+
+The DoS fallback is not a free pass: it writes the DoS-prevention settings and may leave them changed if the restore call fails. Check those settings in the router web UI after any unlock.
 
 ### 🛡️ The Second Route: `setDosPreventions`
 
 Where the password route has been patched, the same web API still copies the DoS-prevention `icmpControl` field into an `iptables` command without validation. That field has no length limit and no character filter, so it can carry the whole installer in one shot.
 
-`check` reads `getDosPreventions` to see whether the DoS setters are registered, and `unlock` uses that route automatically when the password route refuses. The injected rule is put back to its original settings immediately after it fires.
+`check` reads `getDosPreventions` to see whether the DoS setters are registered, and `unlock` uses that route automatically when the password route refuses. After the payload returns, `unlock` sends a second request to put the prior DoS settings back. That restore is best-effort: a failure is reported as a warning, and the settings can remain changed. Verify DoS prevention in the router web UI after an unlock.
 
 ---
 
@@ -243,6 +245,9 @@ Then unlock with it:
 ```bash
 ./flash.sh unlock --key ~/.ssh/idu_rsa
 ```
+
+> [!WARNING]
+> A new unlock clears root's password whether or not `--key` is supplied. The key is an extra way in, not a replacement: until you set a password or install a key, anyone on the LAN can sign in as root. Run `passwd` over SSH when you are done, or keep the router on a trusted network. If you still need the wrappers afterwards, pass `--key` — they sign in with a key or an empty password, not one you set by hand.
 
 Connect with:
 
@@ -297,13 +302,22 @@ A `NO` does not always mean UART. If the web UI still offers **Backup Settings**
 ./flash.sh breeze ~/Downloads/YOUR_BACKUP_FILE
 ```
 
-It decrypts the stock configuration backup, sets a root password (or installs your public key), adds persistent Dropbear startup hooks, and re-encrypts the result as `encrypted_backup_mod.tar.gz`.
+Run it with `--key` if you intend to continue with the wrappers:
+
+```bash
+./flash.sh breeze ~/Downloads/YOUR_BACKUP_FILE --key ~/.ssh/idu_rsa
+```
+
+It decrypts the stock configuration backup, installs your public key (or sets a root password when no key is passed), adds persistent Dropbear startup hooks, and re-encrypts the result as `encrypted_backup_mod.tar.gz`.
 
 Then:
 
 1. restore that file in the router web UI;
 2. enable Dual WAN once if the build needs it to start SSH;
-3. continue with `./flash.sh backup` or `./flash.sh flash`.
+3. continue with `./flash.sh backup --key ~/.ssh/idu_rsa` or `./flash.sh flash --key ~/.ssh/idu_rsa`.
+
+> [!IMPORTANT]
+> Without `--key`, `breeze` sets a root password, and the wrappers authenticate with a key or an empty password — not that password. Either rebuild the backup with `--key`, or sign in to the router yourself with the password you set.
 
 This is the same approach as the community [`breeze.sh`](https://github.com/abhigyan17/Airfiber_Unlock/blob/main/scripts/breeze.sh), built into this project. It never contacts the router and does not use the web API injection, so it also covers Qualcomm `6j11` units on early builds where the runtime probe reports no password history.
 

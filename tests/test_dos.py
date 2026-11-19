@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 
 import idu
@@ -19,11 +21,12 @@ class FakeApi:
     """Records the calls the vector makes, and answers the two read probes."""
 
     def __init__(self, version="SRCMJIO_JIDU6601_R3.2.3", model="JIDU6601",
-                 dos=True, baseline=None):
+                 dos=True, baseline=None, fail_restore=False):
         self.device = idu.Device(model, "Arcadyan", "test", {})
         self.version = version
         self.dos = dos
         self.baseline = dict(baseline or DOS_BASELINE)
+        self.fail_restore = fail_restore
         self.mutations = []
 
     def call(self, method, params=None):
@@ -35,6 +38,8 @@ class FakeApi:
             return {"status": "OK", "results": dict(self.baseline)}
         if method == "setDosPreventions":
             self.mutations.append(dict(params or {}))
+            if self.fail_restore and len(self.mutations) > 1:
+                return {"code": "ERR_INTERNAL", "message": "restore failed"}
             return {"status": "OK"}
         raise AssertionError(f"unexpected API call: {method}")
 
@@ -94,6 +99,14 @@ class ExecuteTests(unittest.TestCase):
         with self.assertRaises(idu.IduError):
             idu.DosPreventionVector().execute(api, "192.168.1.50")
         self.assertEqual(api.mutations, [])
+
+    def test_a_failed_restore_is_reported_without_changing_the_outcome(self):
+        api = FakeApi(fail_restore=True)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            idu.DosPreventionVector().execute(api, "192.168.1.50")
+        self.assertEqual(len(api.mutations), 2)
+        self.assertIn("could not restore DoS settings", stderr.getvalue())
 
 
 if __name__ == "__main__":

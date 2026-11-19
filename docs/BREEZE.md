@@ -270,12 +270,14 @@ Do not rely on `/etc/rc.local` on these builds. The stock firmware has no
 
 ## Step 9 — Back up, then install OpenWrt
 
-Root SSH is now available, so the normal project route works:
+Root SSH is now available. If you built the backup with `--key`, the wrappers can use it:
 
 ```bash
-./flash.sh backup
-./flash.sh flash
+./flash.sh backup --key ~/.ssh/id_rsa
+./flash.sh flash --key ~/.ssh/id_rsa
 ```
+
+A password-protected `breeze` backup (one built without `--key`) does not work with the wrappers: they authenticate with a key or an empty password. Rebuild it with `--key`, or sign in with the password you set.
 
 `backup` detects the existing root session instead of re-running the exploit.
 `flash` performs a fresh backup, downloads and verifies the matching images,
