@@ -111,6 +111,39 @@ The downloaded script runs as root and does three things:
 No keypair is ever generated, and with no `--key` nothing of ours is installed on
 the router at all.
 
+## The second route: `setDosPreventions`
+
+`changeUserPassword` is not the only handler that interpolates a request field
+into a shell command. The DoS-prevention setter copies `icmpControl` straight
+out of the request and concatenates it into an iptables rule:
+
+```text
+iptables ... --limit <icmpControl>/sec --limit-burst <icmpControl> ...
+```
+
+That field has no length cap and no character filter — not even `|` — and the
+same value is interpolated twice, once for `--limit` and once for
+`--limit-burst`. A payload therefore has to stay parseable on its first
+insertion and silence everything after it:
+
+```text
+1 -j RETURN; <command> ; #
+```
+
+`1 -j RETURN` is a valid `--limit` value, and the trailing `#` comments out the
+rest of the line, including the second copy, so the command runs exactly once.
+
+Nothing here is capped, so this route could carry the whole installer inline.
+It fetches it the same way the password route does anyway: one installer, one
+callback path, one place to debug. `getDosPreventions` ships beside the setter,
+so `check` uses it as a read-only presence probe. Before injecting, the vector
+captures the DoS fields that were enabled and reapplies them once the call
+returns, so the payload does not leave a live iptables rule behind.
+
+The route is still present on builds where the password shell-out was replaced:
+a stock `R3.2.3` rootfs carries both fixes to the password handler and the live
+setter. Presence is not proof of execution — `unlock` is the live test.
+
 ## Why persistence needs its own init script
 
 The vendor's `/etc/init.d/dropbear` force-disables SSH on every boot of a Release
@@ -160,11 +193,13 @@ off its admin-session-kill branch.
 
 ## Firmware compatibility
 
-This tool has exactly one method, `changeUserPassword`, so everything here is
-about that handler. The version string is a hint, not a verdict. `check` reads it
-together with the router's family and reports one of three states:
+The version table below is about the `changeUserPassword` route. It cannot
+describe the DoS route, which is detected by probing the API instead: when
+`getDosPreventions` answers, `check` reports the unit as unlockable even if the
+password route is closed on that build. The version string is a hint, not a
+verdict.
 
-| Family | Build | `check` | Why |
+| Family | Build | Password route | Why |
 | --- | --- | :---: | --- |
 | MTK (`6j01`) | `R2.0.18.x` and older | `NO` | no password-history functions; an 18.2 rootfs was read |
 | MTK (`6j01`) | `R2.0.19.0`–`R2.0.19.5` | `TEST` | the history feature landed somewhere in this window |
@@ -230,15 +265,18 @@ callback is still the only evidence that a payload executed.
 
 ### What "NO" means in practice
 
-On a locked unit running `NO` firmware, the `changeUserPassword` route is closed.
-`detect` still works because it only reads the API. `backup` needs root SSH; it
-works if SSH was already enabled (for example through UART), because `unlock`
-checks for that before applying the firmware gate. Otherwise there is no
-supported software-only backup before unlock, and the UART/u-boot console is the
-fallback. Do not flash anything until you have a backup made through that route.
+`check` reports `NO` only when neither route answers: the `changeUserPassword`
+handler is closed on that build and `getDosPreventions` is absent. A build where
+just the password route is closed reports `YES` with the DoS route listed, and
+`unlock` uses it without any extra flag. `detect` still works because it only
+reads the API. `backup` needs root SSH; it works if SSH was already enabled (for
+example through UART), because `unlock` checks for that before applying the
+firmware gate. Otherwise there is no supported software-only backup before
+unlock, and the UART/u-boot console is the fallback. Do not flash anything until
+you have a backup made through that route.
 
-`NO` is a statement about this handler, not an audit of the whole firmware.
-Other API handlers exist and are not tested or used here.
+`NO` is a statement about the two handlers this tool uses, not an audit of the
+whole firmware. Other API handlers exist and are not tested or used here.
 
 ## Where the factory secrets live
 

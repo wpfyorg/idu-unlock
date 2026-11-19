@@ -17,6 +17,10 @@ class FakeApi:
     def call(self, method, params=None):
         if method == "getFirmwareDetails":
             return {"results": {"firmwareVersion": self.version}}
+        if method == "getDosPreventions":
+            # These cases cover the password route only; model a build where
+            # the DoS module is absent.
+            return {"code": "ERR_UNKNOWN_METHOD", "message": "no such method"}
         raise AssertionError(f"unexpected API call: {method}")
 
 

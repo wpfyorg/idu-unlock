@@ -51,17 +51,21 @@ The router locks out after ~5 failures. Wait, then double-check the password.
 <details>
 <summary><strong><code>check</code> reports NO</strong></summary>
 
-`NO` means the firmware is outside the vulnerable range — not that the router is
-unreachable. There are two cases:
+`NO` means neither of the two routes this tool uses is available — not that the
+router is unreachable. Specifically:
 
-- **Older than `R2.0.19` (MediaTek):** the build has no password-history hash at
-  all. The API still accepts a password change, but no shell evaluates it, which
-  is why a run can look successful and produce no callback.
-- **`R3.2.3` or newer (MediaTek):** the vendor replaced the shell-out with
-  `luci.sys.user.setpasswd`.
+- the `changeUserPassword` handler no longer runs a shell (older MediaTek builds
+  predate password history, and `R3.2.3` and newer replaced the shell-out with
+  `luci.sys.user.setpasswd`), **and**
+- `getDosPreventions` does not answer, so the DoS-prevention setter is absent
+  too.
 
-`unlock` refuses before sending a payload. On builds where the web UI still has
-**Backup Settings** and **Restore Settings**, use the offline
+When only the password route is closed, `check` reports `YES` and lists
+`setDosPreventions (icmpControl, R3.x)`; `unlock` tries that route automatically.
+No flag is needed.
+
+If both routes are unavailable and the web UI still has **Backup Settings** and
+**Restore Settings**, use the offline
 [`breeze` configuration-backup route](BREEZE.md) instead:
 
 ```bash
