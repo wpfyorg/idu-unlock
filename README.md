@@ -152,6 +152,8 @@ cd idu-unlock
 
 Windows Firewall must allow Python to receive the router's callback. If Windows refuses port 80, run PowerShell as Administrator.
 
+On a unit that already has root SSH (a `breeze` restore, UART, or an earlier unlock), `.\flash.ps1 backup` uses it and skips the web login, the compatibility check and the unlock — no admin password needed, and no key while root is passwordless.
+
 > [!WARNING]
 > **Do not run this inside WSL2.** WSL2's default NAT cannot receive the router's callback reliably. Use `.\flash.ps1` from Windows itself. More notes: [docs/WINDOWS.md](docs/WINDOWS.md).
 

@@ -6,7 +6,7 @@ is written. The Windows twin of flash.sh: same commands, same options.
   .\flash.ps1                 verify the router -> unlock root SSH -> back it up
   .\flash.ps1 check           can this unit be unlocked? (read-only, safe to run in bulk)
   .\flash.ps1 unlock          root SSH only (persistent, survives reboots)
-  .\flash.ps1 backup          factory credentials + a copy of every partition
+  .\flash.ps1 backup          save device data; over root SSH when it is live
   .\flash.ps1 detect          identify the model, change nothing
 
 Options:
@@ -214,19 +214,29 @@ if (-not $PyExe) {
 # passwordless and installs nothing on the router.
 
 # ---- password ------------------------------------------------------------ #
-if (-not $Password) {
+# Asked for only by the web-API paths. A unit already reachable over root SSH is
+# driven over that session and needs no admin password at all.
+function Get-RouterPassword {
+  if ($script:Password) { return $script:Password }
   $secure = Read-Host -Prompt 'Router admin password' -AsSecureString
-  $Password = (New-Object -TypeName System.Net.NetworkCredential -ArgumentList '', $secure).Password
+  $script:Password = (New-Object -TypeName System.Net.NetworkCredential -ArgumentList '', $secure).Password
+  if (-not $script:Password) { Bad 'no password given'; exit 2 }
+  return $script:Password
 }
-if (-not $Password) { Bad 'no password given'; exit 2 }
 
 function Invoke-Id {
-  param([string[]]$IdArgs = @())
+  param([string[]]$IdArgs = @(), [switch]$SshOnly)
   $callArgs  = @()
   $callArgs += $PyArgs
   $callArgs += '-u'
   $callArgs += (Join-Path $Here 'idu.py')
-  $callArgs += @('--router', $Router, '--password', $Password)
+  $callArgs += @('--router', $Router)
+  if ($SshOnly) {
+    $callArgs += '--ssh-only'
+  }
+  else {
+    $callArgs += @('--password', (Get-RouterPassword))
+  }
   if ($Key) { $callArgs += @('--key', $Key) }
   if ($Address) { $callArgs += @('--address', $Address) }
   if ($ShowVerbose) { $callArgs += '--verbose' }
@@ -242,13 +252,46 @@ function Invoke-Id {
   return $LASTEXITCODE
 }
 
+function Get-RootSshModel {
+  if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) { return $null }
+  $common = @('-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=NUL',
+              '-o', 'ConnectTimeout=8', '-o', 'LogLevel=ERROR', '-o', 'BatchMode=yes')
+  $attempts = New-Object System.Collections.ArrayList
+  if ($Key) {
+    if (-not (Test-Path $Key)) { return $null }
+    [void]$attempts.Add(@('-i', $Key, '-o', 'IdentitiesOnly=yes') + $common)
+  }
+  else {
+    [void]$attempts.Add($common)
+  }
+  [void]$attempts.Add(@('-o', 'PubkeyAuthentication=no',
+                       '-o', 'PreferredAuthentications=none') + $common)
+
+  # An unreachable unit is normal here; native stderr must not abort discovery
+  # under the script's Stop preference.
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'SilentlyContinue'
+  try {
+    foreach ($options in $attempts) {
+      $output = & ssh @options "root@$RouterHost" 'cat /tmp/deviceModel' 2>$null
+      if ($LASTEXITCODE -ne 0) { continue }
+      $model = ([string]($output | Select-Object -First 1)).Trim()
+      if ($model) { return $model }
+    }
+  }
+  finally {
+    $ErrorActionPreference = $previous
+  }
+  return $null
+}
+
 function Confirm-Device {
   Say "Connecting to $RouterHost"
   $callArgs  = @()
   $callArgs += $PyArgs
   $callArgs += '-u'
   $callArgs += (Join-Path $Here 'idu.py')
-  $callArgs += @('--router', $Router, '--password', $Password)
+  $callArgs += @('--router', $Router, '--password', (Get-RouterPassword))
   if ($Key) { $callArgs += @('--key', $Key) }
   if ($Address) { $callArgs += @('--address', $Address) }
   if ($ShowVerbose) { $callArgs += '--verbose' }
@@ -291,12 +334,26 @@ switch ($Command) {
   }
 
   'backup' {
+    $sshModel = Get-RootSshModel
+    if ($sshModel) {
+      Good "root SSH is live on $RouterHost - backing up over it, no web login"
+      $script:NoBanner = $true
+      if ((Invoke-Id -SshOnly -IdArgs @('backup', '--outdir', $OutDir)) -ne 0) { exit 1 }
+      exit 0
+    }
     Confirm-Device
     if ((Invoke-Id @('unlock')) -ne 0) { exit 1 }
     if ((Invoke-Id @('backup', '--outdir', $OutDir)) -ne 0) { exit 1 }
   }
 
   'auto' {
+    $sshModel = Get-RootSshModel
+    if ($sshModel) {
+      Good "root SSH is live on $RouterHost - backing up over it, no web login"
+      $script:NoBanner = $true
+      if ((Invoke-Id -SshOnly -IdArgs @('backup', '--outdir', $OutDir)) -ne 0) { exit 1 }
+      exit 0
+    }
     Confirm-Device
     if ((Invoke-Id @('unlock')) -ne 0) { exit 1 }
     if ((Invoke-Id @('backup', '--outdir', $OutDir)) -ne 0) { exit 1 }
