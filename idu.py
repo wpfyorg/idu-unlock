@@ -1178,7 +1178,12 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
                 print(f"    Method {number}/{total}: failed")
                 if VERBOSE:
                     print(f"      {problem}")
-                continue
+                # The payload can land even when the RPC that carried it errors
+                # out (a timeout, for example). If root SSH answers, fall
+                # through to the success path instead of trying another vector.
+                if not shell.alive():
+                    continue
+                print(f"    Method {number}/{total}: root SSH answered anyway")
 
             try:
                 shell.wait(60, "the router")
