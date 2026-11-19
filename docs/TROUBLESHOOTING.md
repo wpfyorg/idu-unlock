@@ -313,12 +313,22 @@ ifconfig en6 | grep "inet "     # macOS; on Linux: ip -4 addr show <iface>
 ssh root@192.168.1.1 uptime
 ```
 
-The unit is in OpenWrt initramfs at that point. Finish with the manual procedure:
-copy the sysupgrade image over, then run it on the unit:
+The unit is in OpenWrt initramfs at that point. Before copying anything, confirm
+the responder is the unit you flashed: compare its LAN MAC, or a host key you
+recorded, with the stock backup (the MAC is in `factory_env.txt`).
 
 ```bash
-scp -O <sysupgrade-image> root@192.168.1.1:/tmp/
-ssh root@192.168.1.1 'sysupgrade -n /tmp/<sysupgrade-image>'
+ssh root@192.168.1.1 'cat /sys/class/net/eth0/address'
+ssh-keyscan -t rsa 192.168.1.1
+```
+
+If neither matches what you recorded, stop: another device may be answering on
+`192.168.1.1`. Once it matches, copy the sysupgrade image and install it:
+
+```bash
+image=/path/to/<sysupgrade-image>
+scp -O "$image" root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 "sysupgrade -n /tmp/$(basename "$image")"
 ```
 
 See [OPENWRT.md](../OPENWRT.md) for the image names, the checks, and the UART

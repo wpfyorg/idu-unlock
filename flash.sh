@@ -194,12 +194,14 @@ stock_ssh_probe() {
   SSH_PROBE_MODEL=""
   local common=( -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                  -o ConnectTimeout=8 -o LogLevel=ERROR -o BatchMode=yes )
+  local attempts=( none )
   local pubkey=( "${common[@]}" )
   if [ -n "$KEY" ]; then
     [ -f "$KEY" ] || return 1
+    attempts=( pubkey none )
     pubkey=( -i "$KEY" -o IdentitiesOnly=yes "${common[@]}" )
   fi
-  for attempt in pubkey none; do
+  for attempt in "${attempts[@]}"; do
     if [ "$attempt" = "pubkey" ]; then
       out="$(ssh "${pubkey[@]}" "root@$host" 'cat /tmp/deviceModel' 2>/dev/null)"
     else

@@ -286,7 +286,15 @@ If you built the backup with `--key`, the wrappers can use it:
 ./flash.sh flash --key ~/.ssh/id_rsa
 ```
 
-A password-protected `breeze` backup (one built without `--key`) does not work with the wrappers: they authenticate with a key, not with a password. Sign in to the router with that password yourself; to use the wrappers instead, rebuild the backup with `--key` and restore it again.
+A password-protected `breeze` backup (one built without `--key`) is not usable by
+the wrappers directly: they sign in with a key or the passwordless `none` method.
+They fall back to the web-admin password, then run `unlock` and `backup` over the
+API, so the backup can still complete on a build with a working injection route.
+That `unlock` clears the root password `breeze` set. If you need that password,
+sign in with it before running the wrappers, or rebuild the backup with `--key`.
+
+On Windows, automatic unlock during firmware flashing requires `-Key`
+(`fwflash.ps1`); a password-only backup cannot drive it.
 
 Both commands probe root SSH first and skip the web login and the unlock checks when it answers. `flash` still saves a fresh backup before it writes anything.
 
