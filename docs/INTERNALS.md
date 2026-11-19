@@ -137,8 +137,11 @@ Nothing here is capped, so this route could carry the whole installer inline.
 It fetches it the same way the password route does anyway: one installer, one
 callback path, one place to debug. `getDosPreventions` ships beside the setter,
 so `check` uses it as a read-only presence probe. Before injecting, the vector
-captures the DoS fields that were enabled and reapplies them once the call
-returns, so the payload does not leave a live iptables rule behind.
+captures the DoS fields that were enabled and sends a second request to put them
+back afterwards, which is what clears the injected iptables rule. That restore
+is best-effort: if the call raises or returns an error, a warning is printed and
+the settings and the injected rule may remain changed. Check them in the router
+web UI after an unlock.
 
 The route is still present on builds where the password shell-out was replaced:
 a stock `R3.2.3` rootfs carries both fixes to the password handler and the live

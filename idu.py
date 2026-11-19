@@ -1133,7 +1133,8 @@ def unlock(api: Api, key_path: str | None, password: str, port: int = 80,
     vectors: list[Vector] = []
     if not verdict or not verdict.method_closed or force:
         vectors.append(PasswordVector(force=force))
-    vectors.append(DosPreventionVector())
+    if not verdict or verdict.dos_available:
+        vectors.append(DosPreventionVector())
     total = len(vectors)
 
     print("[*] Unlocking...")

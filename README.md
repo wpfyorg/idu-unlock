@@ -247,7 +247,7 @@ Then unlock with it:
 ```
 
 > [!WARNING]
-> A new unlock clears root's password whether or not `--key` is supplied. The key is an extra way in, not a replacement: until you set a password or install a key, anyone on the LAN can sign in as root. Run `passwd` over SSH when you are done, or keep the router on a trusted network. If you still need the wrappers afterwards, pass `--key` — they sign in with a key or an empty password, not one you set by hand.
+> A new unlock clears root's password whether or not `--key` is supplied, and installing a key does **not** close that empty-password login: anyone on the LAN can still sign in as root. Run `passwd` over SSH when you are done, or keep the router on a trusted network. Key sign-in keeps working after you set a root password, so the wrappers still take `--key`.
 
 Connect with:
 

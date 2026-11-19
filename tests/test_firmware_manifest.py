@@ -32,6 +32,11 @@ class FirmwareManifestTest(unittest.TestCase):
                     f"{name}: no alias names this model itself",
                 )
 
+    def test_jidu6711_is_a_6j11_alias(self):
+        # flash.sh maps the model to the 6j11 image set, and the flashers check
+        # the connected model against these aliases before writing anything.
+        self.assertIn("JIDU6711", self.data["models"]["6j11"]["aliases"])
+
     def test_roles_are_the_ones_the_flashers_ask_for(self):
         for name, spec in self.data["models"].items():
             with self.subTest(model=name):

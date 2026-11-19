@@ -270,14 +270,18 @@ Do not rely on `/etc/rc.local` on these builds. The stock firmware has no
 
 ## Step 9 — Back up, then install OpenWrt
 
-Root SSH is now available. If you built the backup with `--key`, the wrappers can use it:
+This assumes the rebuilt `encrypted_backup_mod.tar.gz` has been restored through
+**Administration → Management → Restore Settings** (Step 5) and root SSH answers
+(Steps 6-8).
+
+If you built the backup with `--key`, the wrappers can use it:
 
 ```bash
 ./flash.sh backup --key ~/.ssh/id_rsa
 ./flash.sh flash --key ~/.ssh/id_rsa
 ```
 
-A password-protected `breeze` backup (one built without `--key`) does not work with the wrappers: they authenticate with a key or an empty password. Rebuild it with `--key`, or sign in with the password you set.
+A password-protected `breeze` backup (one built without `--key`) does not work with the wrappers: they authenticate with a key, not with a password. Sign in to the router with that password yourself; to use the wrappers instead, rebuild the backup with `--key` and restore it again.
 
 Both commands probe root SSH first and skip the web login and the unlock checks when it answers. `flash` still saves a fresh backup before it writes anything.
 
