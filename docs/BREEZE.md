@@ -187,16 +187,21 @@ SSH.
 
 ## Step 6 — Start Dropbear
 
-The restore starts Dropbear on its own: `/etc/rc.local` runs on every boot, and
-`/etc/firewall.user` runs on every firewall start, so no web-UI step is needed.
-Connect now (Step 7). Dual WAN is not part of the route any more.
+The restore adds a Dropbear start to `/etc/rc.local` and `/etc/firewall.user`.
+The first runs when the stock `/etc/init.d/done` shells it out at boot; the
+second only when `/etc/config/firewall` includes `firewall.user`, and `breeze`
+writes it only when it does. On builds where those hooks run, connect now
+(Step 7) without touching the web UI.
 
-On units where none of those hooks run, the fallback is **WAN → Dual WAN**
+On units where neither hook runs, the fallback is **WAN → Dual WAN**
 (`https://192.168.31.1/#/WAN/DualWan`). The stock UI often refuses to save that
 toggle: `/sbin/jiodualwan.sh` only enables Dual WAN in `mod` mode, only when
 EoGre is off, and never on a JIDU6501, and it exits 1 without saying so in the
-UI. A toggle that will not stick is normal, not a fault, and it no longer blocks
-SSH.
+UI. A toggle that will not stick is normal, not a fault.
+
+If the toggle will not save either, connect over UART and start
+`dropbear -p 0.0.0.0:22` by hand; the troubleshooting section at the end of this
+page has that path.
 
 If Dual WAN does get enabled, **disable it again** once SSH works. It is only
 used to start Dropbear and can interfere with normal WAN behavior.

@@ -288,9 +288,11 @@ afterwards; the stock image is gone by then.
 <summary><strong>flashing refuses a wireless link</strong></summary>
 
 The unit reboots mid-write, so a Wi-Fi link dies before the install can finish.
-`firmware/fwflash.*` stops before any write when the stock connection is on a
-wireless interface. Connect Ethernet (a USB adapter is fine), retry, and keep the
-cable in until OpenWrt is up at `192.168.1.1`.
+`firmware/fwflash.sh` stops before any write when it detects the stock connection
+on a wireless interface. The Windows launcher, `firmware/fwflash.ps1`, does not
+perform that check. Connect the computer to the unit by Ethernet even when the
+computer or a VM reaches the network over Wi-Fi, and do not rely on the check.
+Keep the cable in until OpenWrt is up at `192.168.1.1`.
 
 </details>
 
@@ -311,9 +313,16 @@ ifconfig en6 | grep "inet "     # macOS; on Linux: ip -4 addr show <iface>
 ssh root@192.168.1.1 uptime
 ```
 
-The unit is in OpenWrt initramfs at that point and nothing is lost: finish with
-`firmware/fwflash.sh <model> --router 192.168.1.1` once the address resolves to
-the unit, or over UART.
+The unit is in OpenWrt initramfs at that point. Finish with the manual procedure:
+copy the sysupgrade image over, then run it on the unit:
+
+```bash
+scp -O <sysupgrade-image> root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 'sysupgrade -n /tmp/<sysupgrade-image>'
+```
+
+See [OPENWRT.md](../OPENWRT.md) for the image names, the checks, and the UART
+recovery path.
 
 </details>
 

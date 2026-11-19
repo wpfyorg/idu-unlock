@@ -1762,6 +1762,24 @@ def _insert_before_exit(path: str, line: str) -> None:
     _write_text(path, "\n".join(lines) + "\n", 0o755)
 
 
+def _hook_path(root: str, relative: str) -> str:
+    """A startup-hook destination that cannot escape the extracted backup.
+
+    ``_safe_extract`` allows symlink entries (vendor backups carry a few), but
+    writing through one would land outside the extraction tree, so every hook
+    destination is rejected outright when it is a symlink.
+    """
+    base = os.path.realpath(root)
+    path = os.path.join(root, *relative.split("/"))
+    if os.path.islink(path):
+        raise IduError(f"backup hook path is a symlink: {relative}")
+    real = os.path.realpath(path)
+    if real != base and not real.startswith(base + os.sep):
+        raise IduError(f"backup hook path escapes the archive: {relative}")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
+
+
 def _install_start_hooks(root: str) -> None:
     """Arrange for Dropbear to start without the web UI.
 
@@ -1778,7 +1796,7 @@ def _install_start_hooks(root: str) -> None:
     - ``/etc/mwan3.user`` stays as the last resort, for builds where Dual WAN
       does work.
     """
-    _insert_before_exit(os.path.join(root, "etc", "rc.local"), DROPBEAR_START)
+    _insert_before_exit(_hook_path(root, "etc/rc.local"), DROPBEAR_START)
 
     firewall_config = _backup_path(root, "etc/config/firewall")
     if firewall_config is not None:
@@ -1786,10 +1804,10 @@ def _install_start_hooks(root: str) -> None:
                   errors="surrogateescape") as handle:
             includes_it = "firewall.user" in handle.read()
         if includes_it:
-            _append_line(os.path.join(root, "etc", "firewall.user"),
+            _append_line(_hook_path(root, "etc/firewall.user"),
                          DROPBEAR_START)
 
-    _append_line(os.path.join(root, "etc", "mwan3.user"), DROPBEAR_START)
+    _append_line(_hook_path(root, "etc/mwan3.user"), DROPBEAR_START)
 
 
 def _as_root(member: tarfile.TarInfo) -> tarfile.TarInfo:
@@ -2085,7 +2103,8 @@ def main(argv: list | None = None) -> int:
                     print("    - if the web UI still offers Backup and Restore, "
                           "./flash.sh breeze FILE")
                     print("      can set root SSH offline; see docs/BREEZE.md")
-            return 0 if verdict.test_required or verdict.unlockable else 2
+            return 0 if (verdict.test_required or verdict.dos_unknown
+                         or verdict.unlockable) else 2
 
         if args.command == "unlock":
             # Carry the verdict out of this session so unlock() can refuse a

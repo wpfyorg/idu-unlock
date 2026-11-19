@@ -309,12 +309,12 @@ stock_link() {
   note_stock_link
   iface="$LINK_IFACE"
   [ -n "$iface" ] || return 0   # unknown: keep the old behaviour
-  addr="$(ifconfig "$iface" 2>/dev/null | awk '/inet /{print $2; exit}')"
+  addr="$(ifconfig "$iface" 2>/dev/null | awk '/inet /{print $2}')"
   [ -n "$addr" ] || addr="$(ip -4 -o addr show "$iface" 2>/dev/null \
-                            | awk '{print $4; exit}' | cut -d/ -f1)"
-  case "${addr:-}" in
-    192.168.1.*) return 0 ;;
-  esac
+                            | awk '{print $4}' | cut -d/ -f1)"
+  # The interface can hold several addresses; only one on the OpenWrt subnet
+  # means the unit has renumbered. A single non-matching address still fails.
+  printf '%s\n' "${addr:-}" | grep -Eq '^192\.168\.1\.' && return 0
   return 1
 }
 

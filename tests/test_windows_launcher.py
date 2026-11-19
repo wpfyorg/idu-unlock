@@ -24,10 +24,20 @@ class WindowsLauncherTests(unittest.TestCase):
             python = root / "bin" / "python3"
             python.write_text(
                 "#!/usr/bin/env bash\n"
-                "cat >/dev/null 2>&1 || true\n"
+                'if [ "$1" = "-" ]; then cat >/dev/null 2>&1 || true; fi\n'
                 'case "$*" in *idu.py*) printf "PY %s\\n" "$*" >> "$TRACE";; esac\n'
                 "exit 0\n")
             python.chmod(0o755)
+
+            # The launcher tries py, then python, then python3. Fail the first
+            # two explicitly so discovery cannot pick a host interpreter.
+            for name in ("py", "python"):
+                decoy = root / "bin" / name
+                decoy.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "cat >/dev/null 2>&1 || true\n"
+                    "exit 1\n")
+                decoy.chmod(0o755)
 
             trace = root / "calls"
             env = dict(os.environ,

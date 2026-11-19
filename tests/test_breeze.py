@@ -36,7 +36,8 @@ def unpack(archive, destination):
         handle.extractall(destination)
 
 
-def make_config_backup(base, mwan3=True, rc_local=True, firewall_include=True):
+def make_config_backup(base, mwan3=True, rc_local=True, firewall_include=True,
+                       rc_local_link=False):
     source = pathlib.Path(base) / "source"
     (source / "etc" / "config").mkdir(parents=True)
     (source / "etc" / "shadow").write_text(
@@ -45,7 +46,9 @@ def make_config_backup(base, mwan3=True, rc_local=True, firewall_include=True):
     os.chmod(source / "etc" / "shadow", 0o600)
     if mwan3:
         (source / "etc" / "mwan3.user").write_text("#!/bin/sh\n")
-    if rc_local:
+    if rc_local_link:
+        (source / "etc" / "rc.local").symlink_to("/tmp/outside-rc.local")
+    elif rc_local:
         (source / "etc" / "rc.local").write_text(
             "#!/bin/sh\n"
             "echo boot\n"
@@ -169,6 +172,16 @@ class BreezeTests(unittest.TestCase):
 
         rc_local = (self.rebuilt(output) / "etc" / "rc.local").read_text()
         self.assertIn(idu.DROPBEAR_START, rc_local)
+
+    def test_refuses_a_symlinked_start_hook(self):
+        backup = make_config_backup(self.temp, rc_local_link=True)
+        output = self.temp / "mod.tar.gz"
+
+        with self.assertRaises(idu.IduError) as raised:
+            self.run_breeze(backup, out=str(output),
+                            root_password="CorrectHorse9")
+        self.assertIn("symlink", str(raised.exception))
+        self.assertFalse(output.exists(), "a rejected rebuild must leave no file")
 
     def test_leaves_firewall_user_alone_when_firewall_does_not_include_it(self):
         backup = make_config_backup(self.temp, firewall_include=False)

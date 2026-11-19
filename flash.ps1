@@ -261,9 +261,9 @@ function Get-RootSshModel {
     if (-not (Test-Path $Key)) { return $null }
     [void]$attempts.Add(@('-i', $Key, '-o', 'IdentitiesOnly=yes') + $common)
   }
-  else {
-    [void]$attempts.Add($common)
-  }
+  # With no key, try only the method the SSH-only backup uses for a passwordless
+  # root; a default identity that the probe accepts but the backup cannot use
+  # would report a session that is not there.
   [void]$attempts.Add(@('-o', 'PubkeyAuthentication=no',
                        '-o', 'PreferredAuthentications=none') + $common)
 

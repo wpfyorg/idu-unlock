@@ -83,7 +83,9 @@ and both the temporary system and permanent sysupgrade identify as
 matching images, writes the `ubi2` spare slot, then installs the official 25.12.6
 sysupgrade. On a unit that has no root SSH yet it first detects 6101 and unlocks
 it; one that is already unlocked is backed up and flashed straight over SSH. The
-flasher refuses a wireless link, because the unit reboots mid-write. UART + TFTP
+shell flasher refuses an interface it detects as wireless; the PowerShell flasher
+does not make that check. Connect the computer to the unit by Ethernet even when
+the computer or a VM uses Wi-Fi, and do not rely on the check. UART + TFTP
 remains the recovery path.
 
 ## Where the images come from
